@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Phase | Phase 1 — Report-Only Foundation |
-| Status | In progress |
-| Progress | P1-01 boundaries documented; P1-02 offline contracts and configuration implemented; live integration remains disabled |
+| Status | In progress — trusted integration and pilot blocked by outstanding approved inputs |
+| Progress | Offline contracts, preflight/rotation, reporting, context validation, comment client, evidence CI, and metrics implemented; 73 offline tests pass; paid execution disabled |
 | Last updated | October 16, 2026 |
 | Source specification | [Adversarial Reviewer Agent Specification](adversarial-reviewer-agent-spec.md) |
 | Target repository | [cenfosoft/SqlScriptDOM](https://github.com/cenfosoft/SqlScriptDOM) |
@@ -402,7 +402,7 @@ The measurement method is reproducible and does not store secrets, full prompts,
 
 ### P1-08 — Verification, Pilot, and Operations
 
-**Status:** Not started
+**Status:** In progress (offline tests and runbook available; live pilot not started)
 
 **Deliverables**
 
@@ -420,6 +420,8 @@ The measurement method is reproducible and does not store secrets, full prompts,
 - [ ] Test cancellation and concurrency when a PR receives a newer commit.
 - [ ] Validate artifact and comment redaction.
 - [ ] Document known limitations and deferred Phase 2 work.
+- [x] Document current operating mode, activation prerequisites, local failures/reruns, and disable/incident procedures in the [tooling runbook](../adversarial-review/README.md).
+- [x] Run offline tool tests, the existing parser suite, workflow lint, and semantic C4 validation; record exact outcomes in Section 9.
 
 **Exit criteria**
 
@@ -427,7 +429,10 @@ All Definition of Done items have linked evidence and the team approves a report
 
 ## 7. Planned Deliverables and Repository Layout
 
-The exact runtime and names remain subject to Section 11 decisions. The proposed layout is:
+The implemented offline foundation uses .NET/C# and the following layout. The
+secret-bearing reporting workflow and provider adapter remain deferred until
+P1-01 activation inputs are approved; their absence is intentional, not a complete
+Phase 1 deployment.
 
 ```text
 .github/
@@ -435,17 +440,21 @@ The exact runtime and names remain subject to Section 11 decisions. The proposed
     adversarial-review.prompt.md
   workflows/
     pr-validation.yml
-    adversarial-review-report.yml
+    adversarial-review-validation.yml
 adversarial-review/
-  AdversarialReview.sln
+  Directory.Build.props
+  README.md
   config/
-    model-pool.json
-    risk-model.json
+    review.json
   schemas/
+    contracts.schema.json
+    configuration.schema.json
     audit-report.schema.json
     check-result.schema.json
+    evidence-manifest.schema.json
     finding.schema.json
     review-run.schema.json
+    reviewer-output.schema.json
   src/
     AdversarialReview.Core/
     AdversarialReview.Cli/
@@ -459,7 +468,26 @@ docs/
     workspace.dsl
 ```
 
-No directory or runtime choice in this proposal is approved until the relevant questions are answered.
+The [tooling README](../adversarial-review/README.md) contains runnable commands and
+documents compatibility and operating limits. No solution file is required; the
+new projects deliberately remain separate from the parser build/package.
+
+### Remaining Activation Blockers and Resume Order
+
+Phase 1 is **not complete**. Local code and synthetic tests do not satisfy its
+pilot/acceptance criteria. Remaining work must proceed in this order:
+
+| Order | Prerequisite / work | Required evidence | Responsible party |
+|---|---|---|---|
+| 1 | Confirm GitHub model entitlement, identifiers, endpoint, auth, permissions, and terms; approve numeric limits and retention | Recorded decisions, protected-environment configuration, no secrets in git | Repository owner / team |
+| 2 | Supply Semgrep/Roslyn policies and approve context/scoring choices | Pinned rule/analyzer inputs and approved reporting policy | Team |
+| 3 | Implement persistent authorization claims, repository-wide spend reservation, trusted event/artifact join, provider adapter, bounded rounds, and history | Crash/replay/concurrency/billing-uncertainty tests with a fake provider before approved live calls | Implementation |
+| 4 | Wire trusted publication and failure artifacts with per-PR serialization | Same-repository and external-fork Actions runs; no untrusted code execution or secret exposure | Implementation / repository owner |
+| 5 | Verify the actual Windows/Ubuntu matrix, calibrate findings, collect telemetry/dispositions, and complete the pilot | Pilot PR/run links, approved baseline/data policy, team sign-off on every Definition of Done item | Entire team |
+
+No remote push, PR publication, repository environment change, or model request has
+been performed. Local GitHub access was used only to read baseline metadata and
+download validation tooling. Do not close Phase 1 merely because local tests pass.
 
 ## 8. Dependency Order and Milestones
 
@@ -479,6 +507,7 @@ Work on schemas and baseline definitions can proceed in parallel after M1. Secre
 
 | Date | Update | Evidence / next step |
 |---|---|---|
+| October 16, 2026 | Documented operator procedures and explicit activation/resume dependencies; retained all unmet pilot/approval criteria as open. | [Tooling runbook](../adversarial-review/README.md). Final offline suite: 73 passed; parser suite: 1,176 passed. No live model workflow is enabled. |
 | October 16, 2026 | Implemented an idempotent GitHub audit-comment client with bot-only targets, run ordering, pre/post SHA checks, and explicit duplicate/permission failures. | Combined suite: 73 passed (9 publisher cases). Synthetic HTTP tests only; no remote comment was created. Trusted workflow concurrency, artifact failure handling, and live pilot remain pending. |
 | October 16, 2026 | Added bounded context building and strict reviewer-response validation without provider access. | Combined suite: 64 passed; CLI build: 0 warnings/errors. Tests cover exact UTF-8 budget boundaries, JSON-escaped secrets, wrong SHA/source/disposition, invented evidence, and malformed responses. No live adversarial loop is claimed. |
 | October 16, 2026 | Added bounded/checksummed evidence manifests and updated untrusted CI to publish build logs/TRX while preserving both OS matrices. Added standalone offline foundation validation. | Combined .NET suite: 59 passed. CLI build: 0 warnings/errors; file-logger capture verified. Modified workflows pass pinned actionlint 1.7.7. Actual Actions matrix and team-supplied analysis policies remain pending. |
@@ -671,6 +700,8 @@ Add approved answers here; do not rely only on chat history.
 | D-017 | October 16, 2026 | Review rounds and cost limits are repository-configurable; numeric cost limits are pending. | Entire team | Define schemas now; paid execution stays disabled until safe values and enforcement behavior are approved. |
 | D-018 | October 16, 2026 | Exclude bot-authored, closed-unmerged, and currently draft PRs from baseline metrics. | Entire team | Open non-draft human PRs remain in the separate open-age cohort. |
 | D-019 | October 16, 2026 | Semgrep rules and Roslyn analyzer policy will be supplied manually by the team. | Entire team | Design integration points now; do not invent the final rule policy. |
+| D-020 | October 16, 2026 | Implement offline contracts using Draft 2020-12, explicit version `1.0`, closed schemas, and local URN resolution. | Implementation choice | Unknown/additive fields and future versions are rejected until explicitly supported; no network schema retrieval. |
+| D-021 | October 16, 2026 | Leave numeric risk unavailable rather than invent unapproved weights; keep byte limits distinct from provider token accounting. | Implementation safety choice | Team approval and model-specific accounting remain required before calibrated or paid operation. |
 
 ## 13. Risks and Issues
 

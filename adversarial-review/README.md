@@ -178,3 +178,67 @@ explicit; the eventual host must retain the audit artifact and expose failed
 publication without rerunning inference. There is deliberately no CLI `publish`
 command or secret-bearing workflow until authorization, budgets, and environment
 protection are implemented and approved.
+
+## Operator runbook and activation prerequisites
+
+### Current operating mode
+
+- Only deterministic validation is wired into Actions. The foundation workflow has
+  read-only repository permissions and does not receive a model credential.
+- No event, label, comment, workflow rerun, or configuration edit can invoke a model
+  through the current CLI: it has no model-execution command.
+- Applying `adversarial-review:run` currently does **not** start paid review. Do not
+  interpret the presence of the label as a completed authorization implementation.
+- Existing CI remains authoritative. Offline tool tests, rendered reports, and
+  synthetic successful checks are not evidence that a real PR passed validation.
+
+### Before implementing or enabling trusted execution
+
+1. Confirm repository-supported GitHub model access, exact model identifiers,
+   authentication/permissions, and provider retention terms. Personal chat access
+   or the local GitHub CLI token is not evidence of Actions model entitlement.
+2. Approve round, token, timeout, retry, per-authorization USD, and monthly USD
+   limits. Configure provider-side limits as defense in depth; do not assume an
+   application estimate is an enforceable billing cap.
+3. Implement/test a persistent atomic authorization claim and monthly spend
+   reservation. Handle crashes, concurrent PRs, retries with uncertain billing, and
+   repeated workflow attempts before any inference request can be made.
+4. Create the protected reporting environment with the approved reviewer identity
+   and restrict workflow execution to trusted default-branch code. Do not grant
+   an untrusted validation job environment access.
+5. Supply the team-owned Semgrep rules and Roslyn analyzer policy, pin tooling,
+   and verify successful evidence for both authoritative OS matrices.
+6. Approve artifact/metrics retention and raw-data access, model-context selection,
+   and reporting redaction. Keep raw prompts and credentials out of artifacts.
+7. Implement the trusted event join, artifact download/extraction checks, provider
+   adapter, bounded model loop, concurrency locks, durable audit history, and failure
+   artifact publication. Require fresh head/state checks after approval and before
+   every round. The current comment client is not a spending authorization service.
+8. Run fork and same-repository pilot scenarios using approved limits and obtain
+   team acceptance. Calibrate numeric risk before introducing numeric reporting;
+   automatic correction/merge remains outside Phase 1.
+
+### Failures and reruns
+
+- A structural validation failure exits nonzero without echoing document contents.
+  Fix the input rather than relaxing schema enforcement.
+- An incomplete baseline exits 3 and retains diagnostics in its JSON. Extend the
+  window/page allowance deliberately; do not relabel partial results as complete.
+- Missing/failed evidence or manifest generation must stay failed/incomplete.
+  Inspect raw artifacts and the actual Actions run. Never fabricate analyzer passes.
+- Retry only the offline command or publication step that failed. Publication
+  retries must not repeat model inference. A new head always needs new authorization.
+- There is no live inference retry mechanism yet. Future retries must be bounded,
+  reserved, auditable, and safe when a timed-out request may already have been billed.
+
+### Disable and incident handling
+
+Keep `enabled: false` as the default. The eventual trusted host must enforce it
+before accessing providers, but the flag is not a provider-side billing control.
+For an incident after deployment, disable the trusted workflow, cancel queued/running
+review jobs, revoke or rotate provider credentials, block environment approvals, and
+review provider usage before restoring access. Do not disable authoritative parser CI
+to disable advisory review. Preserve sanitized incident evidence under the approved
+retention policy; delete exposed secrets from comments/artifacts using repository
+administration tools. No repository environment or remote configuration has been
+created by this implementation.
