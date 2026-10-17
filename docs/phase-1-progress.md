@@ -360,7 +360,7 @@ Repeated runs update one comment, stale runs cannot overwrite current results, a
 
 ### P1-07 — Baseline Metrics and Observability
 
-**Status:** Not started
+**Status:** In progress (collector tested and initial fork baseline collected; telemetry/policy pending)
 
 **Deliverables**
 
@@ -374,11 +374,21 @@ Repeated runs update one comment, stale runs cannot overwrite current results, a
 - [x] Define the initial lead-time baseline as the previous six months, starting when a PR becomes ready for review and ending when it is merged.
 - [x] Include human-authored open PRs as a separate open-age/censored cohort so they are visible without inventing a merge date.
 - [x] Exclude bot-authored PRs, closed-unmerged PRs, and PRs that are drafts at the observation date.
-- [ ] Implement an extensible .NET baseline extraction command so the range and filters can be adjusted when the sample is insufficient.
+- [x] Implement an extensible .NET baseline extraction command with configurable months and bounded pagination, separate open/merged cohorts, and explicit completeness diagnostics.
 - [ ] Record workflow latency, model latency, tokens, estimated cost, result, and failure reason.
 - [ ] Define how maintainers mark findings valid, false positive, accepted risk, or duplicate.
 - [ ] Define where aggregate metrics live and who can access them.
-- [ ] Produce the initial baseline report before comparing intervention results.
+- [x] Collect an initial six-month fork baseline and record aggregate results below; sample size is insufficient for impact claims.
+
+**Initial baseline observation**
+
+Read-only GitHub collection at `2026-10-17T05:07:15.606814Z` (October 16 locally)
+covered the preceding six calendar months. Collection reported complete with no
+diagnostics: **1 merged human PR**, merged-only median **17.7464 hours**, and
+**1 open human PR** with censored age **148.2088 hours**. These cohorts must not
+be combined. The fork sample is too small to estimate improvement or calibrate
+thresholds; the same command can target upstream or a longer window after scope
+approval. Raw JSON is kept outside the repository pending retention/access policy.
 
 **Exit criteria**
 
@@ -463,6 +473,8 @@ Work on schemas and baseline definitions can proceed in parallel after M1. Secre
 
 | Date | Update | Evidence / next step |
 |---|---|---|
+| October 16, 2026 | Ran the baseline CLI against the fork using existing read-only GitHub access; no model API or remote mutation was used. | Collection complete: 1 merged and 1 open human PR, no diagnostics. Aggregate results in P1-07; raw dataset remains outside git. CLI build: 0 warnings/errors. |
+| October 16, 2026 | Added .NET baseline collector and CLI: current-state snapshot, timeline-derived readiness, six-month configurable window, merged-only median, and separate open censored cohort. | 36 metrics tests pass; combined suite 56 passed. [Command and metric definitions](../adversarial-review/README.md). Raw-data retention and access approval remain pending. |
 | October 16, 2026 | Added offline advisory audit generation, cross-record semantic validation, bounded/redacted Markdown rendering, and an initial report-only reviewer prompt. | Foundation and audit test selector: 20 passed. Numeric scoring deliberately remains unavailable pending calibration decisions. No PR publication or provider requests implemented. |
 | October 16, 2026 | Implemented P1-02 offline foundation: .NET library, CLI, strict local schemas, disabled configuration, authorization/check preflight, and cyclic model selection. | `dotnet test adversarial-review/tests/AdversarialReview.Tests/AdversarialReview.Tests.csproj -c Debug --filter FullyQualifiedName~FoundationTests`: 13 passed. CLI `validate-config` reports six execution blockers; valid finding fixture accepted. [Tooling and commands](../adversarial-review/README.md). Paid access, anti-replay storage, and spend enforcement remain unimplemented. |
 | October 16, 2026 | Created local branch `feature/adversarial-reviewer-phase-1` and committed the planning baseline as `2afdd6a`. | README, source specification, and this tracker committed; no remote push performed. |

@@ -78,3 +78,37 @@ It does not publish to GitHub or treat stored history as spending authorization.
 
 The [reviewer prompt](../.github/prompts/adversarial-review.prompt.md) is an offline
 starting point. Prompt-injection resilience still needs live pilot evaluation.
+
+## Lead-time baseline
+
+```text
+dotnet run --project adversarial-review/src/AdversarialReview.Cli -- baseline cenfosoft SqlScriptDOM baseline.json 6 100
+```
+
+Supply a read-only GitHub API token using `GH_TOKEN`, never a command-line argument.
+The final parameters are trailing calendar months (default 6) and the per-resource
+pagination cap (default 100). Every request has a 30-second timeout and collection
+has a ten-minute cancellation limit. Outputs are new files; existing files are not
+overwritten. No paid model API is used. For a small sample, rerun into a different
+file with a longer month range; inspect completeness before comparing results.
+
+The command collects a **current-state** snapshot, not a reconstruction of arbitrary
+historical PR states. It scans PRs regardless of creation date so an older PR readied
+recently is not lost. Timelines establish the first ready-for-review event; creation
+is used only when a complete timeline has no draft/readiness transitions. Ambiguous
+or unavailable timelines are diagnosed, not guessed.
+
+- Merged human PRs: ready-for-review to merge, with merged-only count/median hours.
+- Open non-draft human PRs: ready-for-review to observation, as a separate censored
+  cohort. Do not treat open age as completed lead time.
+- Excluded: bots, currently draft PRs, closed-unmerged PRs, and readiness outside
+  the trailing window. Human documentation-only PRs remain in scope.
+
+The JSON records observation/range, durations, exclusions, limitations, and diagnostics.
+`isComplete: false` and exit code **3** indicate truncated, unavailable, malformed,
+or inconsistent evidence; partial cohorts must not be presented as a complete baseline.
+Argument/input failures exit **1**, and command syntax errors exit **2**.
+Snapshots can be recalculated offline through `BaselineCalculator.Calculate`.
+Raw snapshots contain PR numbers and timestamps, not source, prompts, or credentials.
+Storage, retention, and access policy still require team approval; do not automatically
+commit or upload a raw dataset.
