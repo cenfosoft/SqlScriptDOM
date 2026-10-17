@@ -5,7 +5,7 @@ return await ReviewCommand.RunAsync(args);
 
 internal static class ReviewCommand
 {
-    public static Task<int> RunAsync(string[] args)
+    public static async Task<int> RunAsync(string[] args)
     {
         try
         {
@@ -19,25 +19,30 @@ internal static class ReviewCommand
                         config.Enabled,
                         executionBlockers = config.ExecutionBlockers()
                     }, Contracts.JsonOptions));
-                    return Task.FromResult(0);
+                    return 0;
                 case ["validate", string schema, string path]:
                     Contracts.Validate(ReadDocument(path), schema);
                     Console.WriteLine($"Valid {schema} document (schema {Contracts.Version}).");
-                    return Task.FromResult(0);
+                    return 0;
+                case ["render", string input, string output]:
+                    AuditReport audit = Contracts.Read<AuditReport>(ReadDocument(input), "audit-report");
+                    await WriteNewFileAsync(output, ReportRenderer.Render(audit));
+                    Console.WriteLine("Advisory Markdown written; no PR comment was published.");
+                    return 0;
                 default:
-                    Console.Error.WriteLine("Usage: validate-config <path> | validate <schema-name> <path>");
-                    return Task.FromResult(2);
+                    Console.Error.WriteLine("Usage: validate-config <path> | validate <schema-name> <path> | render <audit.json> <output.md>");
+                    return 2;
             }
         }
         catch (Exception exception) when (exception is ContractException or ArgumentException)
         {
             Console.Error.WriteLine($"Validation failed: {exception.Message}");
-            return Task.FromResult(1);
+            return 1;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
         {
             Console.Error.WriteLine($"Input/output failed ({exception.GetType().Name}); no document content is logged.");
-            return Task.FromResult(1);
+            return 1;
         }
     }
 
@@ -48,5 +53,12 @@ internal static class ReviewCommand
             throw new ContractException("Input file exceeds the document size limit.");
         using StreamReader reader = new(stream);
         return reader.ReadToEnd();
+    }
+
+    private static async Task WriteNewFileAsync(string path, string content)
+    {
+        await using FileStream stream = new(path, FileMode.CreateNew, FileAccess.Write);
+        await using StreamWriter writer = new(stream);
+        await writer.WriteAsync(content);
     }
 }

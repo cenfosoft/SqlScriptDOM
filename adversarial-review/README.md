@@ -12,6 +12,7 @@ From the repository root:
 dotnet test adversarial-review/tests/AdversarialReview.Tests/AdversarialReview.Tests.csproj -c Debug
 dotnet run --project adversarial-review/src/AdversarialReview.Cli -- validate-config adversarial-review/config/review.json
 dotnet run --project adversarial-review/src/AdversarialReview.Cli -- validate finding adversarial-review/tests/fixtures/finding.valid.json
+dotnet run --project adversarial-review/src/AdversarialReview.Cli -- render audit.json report.md
 ```
 
 The shipped [configuration](config/review.json) is intentionally disabled, has no models,
@@ -57,3 +58,23 @@ Never include API keys, request headers, full prompts, or raw provider responses
 configuration, fixtures, comments, or logs. Structural validation errors deliberately
 omit document values. Provider-specific retention disclosures, output redaction, and
 artifact retention remain required before live operation.
+
+## Offline advisory reports
+
+`AuditEngine.Create` binds checks and findings to one run, requires the configured
+round count for a complete report, and lists unresolved high/critical findings.
+Missing checks or rounds produce `incomplete`; a changed head produces `stale`.
+Complete describes the evidence collection, **not** safety or merge clearance.
+Numeric risk stays `null` until the team approves provisional weights; zero is not
+a substitute for missing evidence.
+
+The renderer validates audit input, escapes untrusted Markdown/HTML and mentions,
+redacts supplied known secrets and common API-token patterns, and bounds comments
+to 45,000 characters. Heuristic redaction cannot prove that arbitrary text contains
+no credentials; the host must supply exact secret values for redaction and enforce
+data-minimization before persistence. Raw audit input must never be published directly.
+Rendering writes a new local file only and refuses to overwrite an existing file.
+It does not publish to GitHub or treat stored history as spending authorization.
+
+The [reviewer prompt](../.github/prompts/adversarial-review.prompt.md) is an offline
+starting point. Prompt-injection resilience still needs live pilot evaluation.

@@ -86,7 +86,7 @@
     },
     "audit": {
       "type": "object", "additionalProperties": false,
-      "required": ["schemaVersion", "mode", "calibration", "run", "checks", "findings", "rounds", "status", "riskScore", "blockers", "limitations"],
+      "required": ["schemaVersion", "mode", "calibration", "run", "checks", "findings", "rounds", "expectedRounds", "status", "riskScore", "blockers", "limitations"],
       "properties": {
         "schemaVersion": { "const": "1.0" },
         "mode": { "const": "report-only" },
@@ -95,6 +95,7 @@
         "checks": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/check" } },
         "findings": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/finding" } },
         "rounds": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/round" } },
+        "expectedRounds": { "type": "integer", "minimum": 1, "maximum": 100 },
         "status": { "enum": ["complete", "incomplete", "stale"] },
         "riskScore": { "type": "null" },
         "blockers": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/text" } },

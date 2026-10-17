@@ -47,6 +47,7 @@ public static class Contracts
         EvaluationResults result = schema.Evaluate(JsonNode.Parse(json), options);
         if (!result.IsValid)
             throw new ContractException($"Document does not satisfy {schemaName} schema version {Version}.");
+        ValidateSemantics(document.RootElement, schemaName);
     }
 
     private static JsonDocument ParseDocument(string json)
@@ -60,6 +61,53 @@ public static class Contracts
             throw new ContractException("Malformed JSON or document depth exceeds the limit.");
         }
     }
+
+    private static void ValidateSemantics(JsonElement root, string schemaName)
+    {
+        if (schemaName == "finding")
+            ValidateFinding(JsonSerializer.Deserialize<Finding>(root, JsonOptions)!);
+        if (schemaName != "audit-report") return;
+
+        AuditReport audit = JsonSerializer.Deserialize<AuditReport>(root, JsonOptions)!;
+        if (audit.Findings.Select(f => f.Id).Distinct(StringComparer.Ordinal).Count() != audit.Findings.Length)
+            throw new ContractException("Duplicate finding identifiers are not permitted.");
+        foreach (Finding finding in audit.Findings)
+        {
+            ValidateFinding(finding);
+            if (finding.HeadSha != audit.Run.HeadSha)
+                throw new ContractException("Finding SHA does not match the audit run.");
+        }
+        if (audit.Checks.Any(c => c.HeadSha != audit.Run.HeadSha))
+            throw new ContractException("Check SHA does not match the audit run.");
+        if (audit.Rounds.Where((round, index) => round.Number != index + 1).Any()
+            || audit.Rounds.Length > audit.ExpectedRounds)
+            throw new ContractException("Audit rounds must be ordered, contiguous, and within the expected count.");
+        if (audit.Status == "complete" && (audit.Rounds.Length != audit.ExpectedRounds
+            || audit.Rounds.Any(r => r.Outcome != "completed")
+            || CheckPolicy.Blockers(audit.Run.HeadSha, audit.Checks).Length != 0))
+            throw new ContractException("A complete audit requires all expected rounds and mandatory checks.");
+    }
+
+    private static void ValidateFinding(Finding finding)
+    {
+        foreach (Evidence evidence in finding.Evidence)
+        {
+            if (evidence.Kind == "file")
+            {
+                if (!IsSafeRelativePath(evidence.Reference))
+                    throw new ContractException("File evidence must use a safe repository-relative path.");
+                if (evidence.StartLine is null || evidence.EndLine is null || evidence.StartLine > evidence.EndLine)
+                    throw new ContractException("File evidence requires an ordered line range.");
+            }
+            else if (evidence.StartLine is not null || evidence.EndLine is not null)
+                throw new ContractException("Only file evidence may contain source line numbers.");
+        }
+    }
+
+    public static bool IsSafeRelativePath(string path) =>
+        !string.IsNullOrWhiteSpace(path) && !path.StartsWith('/')
+        && !path.Contains('\\') && !path.Contains(':') && !path.Any(char.IsControl)
+        && path.Split('/').All(part => part.Length > 0 && part is not ("." or ".."));
 
     private static JsonSchema LoadSchema(string name)
     {
@@ -115,5 +163,5 @@ public sealed record ReviewRound(
 
 public sealed record AuditReport(
     string SchemaVersion, string Mode, string Calibration, ReviewRun Run, CheckResult[] Checks,
-    Finding[] Findings, ReviewRound[] Rounds, string Status, decimal? RiskScore,
+    Finding[] Findings, ReviewRound[] Rounds, int ExpectedRounds, string Status, decimal? RiskScore,
     string[] Blockers, string[] Limitations);

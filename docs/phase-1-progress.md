@@ -283,7 +283,7 @@ A safe and a deliberately failing pilot PR both produce complete evidence withou
 
 ### P1-04 — Adversarial Reviewer
 
-**Status:** Not started
+**Status:** In progress (offline prompt and rotation only)
 
 **Deliverables**
 
@@ -314,7 +314,7 @@ Recorded fixtures produce schema-valid findings, invalid output is bounded and e
 
 ### P1-05 — Provisional Risk and Audit Engine
 
-**Status:** Not started
+**Status:** In progress (offline completeness/blocker engine; numeric weights await approval)
 
 **Deliverables**
 
@@ -325,10 +325,11 @@ Recorded fixtures produce schema-valid findings, invalid output is bounded and e
 **Tasks**
 
 - [ ] Define Phase 1 provisional weights for reporting only.
-- [ ] Encode mandatory blockers separately from numeric score.
-- [ ] Include completeness and confidence indicators.
-- [ ] Produce deterministic output ordering for reviewability and tests.
-- [ ] Add unit fixtures for clean, warning, blocker, missing-signal, malformed, and stale-SHA cases.
+- [x] Encode mandatory blockers separately from numeric score; unknown numeric risk remains `null`, never zero.
+- [x] Include completeness and per-finding confidence indicators.
+- [x] Produce deterministic output ordering for reviewability and tests.
+- [x] Add offline unit cases for clean, high-severity, missing-signal, malformed, cross-SHA, and stale-SHA inputs.
+- [ ] Obtain approval for numeric scoring weights before enabling numeric reporting.
 
 **Exit criteria**
 
@@ -462,6 +463,7 @@ Work on schemas and baseline definitions can proceed in parallel after M1. Secre
 
 | Date | Update | Evidence / next step |
 |---|---|---|
+| October 16, 2026 | Added offline advisory audit generation, cross-record semantic validation, bounded/redacted Markdown rendering, and an initial report-only reviewer prompt. | Foundation and audit test selector: 20 passed. Numeric scoring deliberately remains unavailable pending calibration decisions. No PR publication or provider requests implemented. |
 | October 16, 2026 | Implemented P1-02 offline foundation: .NET library, CLI, strict local schemas, disabled configuration, authorization/check preflight, and cyclic model selection. | `dotnet test adversarial-review/tests/AdversarialReview.Tests/AdversarialReview.Tests.csproj -c Debug --filter FullyQualifiedName~FoundationTests`: 13 passed. CLI `validate-config` reports six execution blockers; valid finding fixture accepted. [Tooling and commands](../adversarial-review/README.md). Paid access, anti-replay storage, and spend enforcement remain unimplemented. |
 | October 16, 2026 | Created local branch `feature/adversarial-reviewer-phase-1` and committed the planning baseline as `2afdd6a`. | README, source specification, and this tracker committed; no remote push performed. |
 | October 16, 2026 | Started P1-01: translated and expanded the C4 model to context/container views; documented trust boundaries, authorization/CI ordering, and explicit failure cases. | [Architecture model](architecture/workspace.dsl), Sections 5.6-5.7. Runtime enforcement and scenario tests remain pending. |
