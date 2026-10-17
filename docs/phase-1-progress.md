@@ -341,7 +341,7 @@ The same normalized inputs always produce the same report and score. The output 
 
 ### P1-06 — Non-Blocking PR Audit Comment
 
-**Status:** Not started
+**Status:** In progress (HTTP client and synthetic tests implemented; trusted host and live pilot pending)
 
 **Deliverables**
 
@@ -351,11 +351,13 @@ The same normalized inputs always produce the same report and score. The output 
 
 **Tasks**
 
-- [ ] Define comment marker and lookup/update behavior.
-- [ ] Display head SHA, check summary, findings, provisional score, limitations, and next actions.
+- [x] Define bot-only comment marker and idempotent lookup/update behavior with run/attempt metadata.
+- [x] Render head SHA, check summary, findings, uncalibrated-score limitation, model rounds, and next actions.
 - [ ] Prevent stale runs from overwriting a newer report.
-- [ ] Sanitize or escape untrusted Markdown content.
-- [ ] Define behavior when comments are disabled or permission is denied.
+- [x] Sanitize untrusted Markdown/HTML, mentions, and supplied secrets in rendered comments.
+- [x] Make client permission/HTTP/pagination errors explicit without model retries.
+- [ ] Wire host artifact retention and workflow failure reporting for publication errors.
+- [ ] Enforce a trusted per-PR publication lock and test actual fork/same-repository Actions runs.
 - [ ] Record the authorized actor and head SHA without exposing credentials.
 
 **Exit criteria**
@@ -477,6 +479,7 @@ Work on schemas and baseline definitions can proceed in parallel after M1. Secre
 
 | Date | Update | Evidence / next step |
 |---|---|---|
+| October 16, 2026 | Implemented an idempotent GitHub audit-comment client with bot-only targets, run ordering, pre/post SHA checks, and explicit duplicate/permission failures. | Combined suite: 73 passed (9 publisher cases). Synthetic HTTP tests only; no remote comment was created. Trusted workflow concurrency, artifact failure handling, and live pilot remain pending. |
 | October 16, 2026 | Added bounded context building and strict reviewer-response validation without provider access. | Combined suite: 64 passed; CLI build: 0 warnings/errors. Tests cover exact UTF-8 budget boundaries, JSON-escaped secrets, wrong SHA/source/disposition, invented evidence, and malformed responses. No live adversarial loop is claimed. |
 | October 16, 2026 | Added bounded/checksummed evidence manifests and updated untrusted CI to publish build logs/TRX while preserving both OS matrices. Added standalone offline foundation validation. | Combined .NET suite: 59 passed. CLI build: 0 warnings/errors; file-logger capture verified. Modified workflows pass pinned actionlint 1.7.7. Actual Actions matrix and team-supplied analysis policies remain pending. |
 | October 16, 2026 | Verified existing parser behavior after adding the independent review tooling. | `dotnet test Test/SqlDom/UTSqlScriptDom.csproj -c Debug -p:TargetFramework=net8.0 --logger 'console;verbosity=normal'`: 1,176 passed. Existing serialization/discovery warnings were not changed. Synthetic manifest CLI and schema validation also passed. |

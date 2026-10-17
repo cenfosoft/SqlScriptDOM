@@ -155,4 +155,26 @@ later human dispositions remain necessary.
 
 These components are offline building blocks, not a running model loop. No live
 provider adapter, persistent authorization claim, monthly spend ledger, or trusted
-PR publisher is enabled.
+reporting workflow is enabled.
+
+## PR comment client (not wired to a live workflow)
+
+`GitHubAuditPublisher` is tested against synthetic HTTP handlers only. It supports
+one `github-actions[bot]` comment with a stable marker and head/run/attempt metadata,
+creates or updates idempotently, refuses ambiguous duplicates or newer stored runs,
+and rejects draft, closed, or mismatched-head PRs. It rechecks before publication
+and marks its own comment stale if the PR changes during the write.
+
+The host **must serialize the complete call per PR**; GitHub comment updates are
+not an atomic compare-and-swap with PR head updates. Pre/post checks detect races
+but are not a substitute for a trusted workflow concurrency policy. Comment metadata
+is for publication ordering only, never authorization or budget accounting.
+
+Use a finite-timeout `HttpClient`, an Actions bot reporting credential, and a bounded
+cancellation token. The client uses only GitHub API PR reads and issue-comment
+reads/writes, logs neither tokens nor response bodies, and performs no model calls,
+approvals, source writes, or merges. HTTP/permission/schema/pagination errors remain
+explicit; the eventual host must retain the audit artifact and expose failed
+publication without rerunning inference. There is deliberately no CLI `publish`
+command or secret-bearing workflow until authorization, budgets, and environment
+protection are implemented and approved.
