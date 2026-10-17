@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="JsonSchema.Net" />
+    <EmbeddedResource Include="../../schemas/*.schema.json" />
+  </ItemGroup>
+</Project>

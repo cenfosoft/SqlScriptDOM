@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "1.0",
+  "enabled": false,
+  "authorizationLabel": "adversarial-review:run",
+  "authorizedActors": ["allancascante"],
+  "environment": "adversarial-review",
+  "rounds": null,
+  "limits": {
+    "maxInputTokens": null,
+    "maxOutputTokens": null,
+    "timeoutSeconds": null,
+    "maxRetries": null,
+    "perAuthorizationUsd": null,
+    "monthlyUsd": null
+  },
+  "models": []
+}

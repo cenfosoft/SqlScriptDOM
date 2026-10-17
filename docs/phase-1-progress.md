@@ -4,7 +4,7 @@
 |---|---|
 | Phase | Phase 1 — Report-Only Foundation |
 | Status | In progress |
-| Progress | P1-01 architecture and failure-policy draft implemented; provider access, limits, and retention remain open |
+| Progress | P1-01 boundaries documented; P1-02 offline contracts and configuration implemented; live integration remains disabled |
 | Last updated | October 16, 2026 |
 | Source specification | [Adversarial Reviewer Agent Specification](adversarial-reviewer-agent-spec.md) |
 | Target repository | [cenfosoft/SqlScriptDOM](https://github.com/cenfosoft/SqlScriptDOM) |
@@ -221,7 +221,7 @@ No secret-bearing workflow implementation begins until the security model and pr
 
 ### P1-02 — Versioned Data Contracts
 
-**Status:** Not started
+**Status:** In progress
 
 **Deliverables**
 
@@ -242,11 +242,13 @@ No secret-bearing workflow implementation begins until the security model and pr
 
 **Tasks**
 
-- [ ] Choose JSON Schema draft and schema directory.
-- [ ] Define enums and compatibility rules.
+- [x] Choose JSON Schema Draft 2020-12 in [adversarial-review/schemas/](../adversarial-review/schemas/).
+- [x] Define version `1.0`, closed enums, and explicit rejection of unknown fields and future versions.
 - [ ] Define redaction rules for logs and model output.
-- [ ] Add schema-validation tests using the selected orchestration runtime.
-- [ ] Document schema versioning and migration policy.
+- [x] Add .NET schema-validation tests, including duplicate keys, invalid fixtures, unsupported versions, and size limits.
+- [x] Document schema versioning and migration policy in the [tooling README](../adversarial-review/README.md).
+- [x] Implement disabled JSON configuration, pure authorization/check preflight, and ordered model rotation with offline tests.
+- [ ] Verify all eventual producers and consumers use schema and cross-record validation; no live producer is implemented yet.
 
 **Exit criteria**
 
@@ -460,6 +462,7 @@ Work on schemas and baseline definitions can proceed in parallel after M1. Secre
 
 | Date | Update | Evidence / next step |
 |---|---|---|
+| October 16, 2026 | Implemented P1-02 offline foundation: .NET library, CLI, strict local schemas, disabled configuration, authorization/check preflight, and cyclic model selection. | `dotnet test adversarial-review/tests/AdversarialReview.Tests/AdversarialReview.Tests.csproj -c Debug --filter FullyQualifiedName~FoundationTests`: 13 passed. CLI `validate-config` reports six execution blockers; valid finding fixture accepted. [Tooling and commands](../adversarial-review/README.md). Paid access, anti-replay storage, and spend enforcement remain unimplemented. |
 | October 16, 2026 | Created local branch `feature/adversarial-reviewer-phase-1` and committed the planning baseline as `2afdd6a`. | README, source specification, and this tracker committed; no remote push performed. |
 | October 16, 2026 | Started P1-01: translated and expanded the C4 model to context/container views; documented trust boundaries, authorization/CI ordering, and explicit failure cases. | [Architecture model](architecture/workspace.dsl), Sections 5.6-5.7. Runtime enforcement and scenario tests remain pending. |
 | October 16, 2026 | P1-01 documentation validation: whitespace and local links checked; semantic Structurizr validation is pending because no CLI is installed and the local Docker daemon is unavailable. | Validate the DSL with Structurizr before declaring the architecture milestone complete. No parser or workflow code changed. |

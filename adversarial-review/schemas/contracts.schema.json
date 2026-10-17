@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:scriptdom:adversarial-review:contracts:1.0",
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "text": { "type": "string", "minLength": 1, "maxLength": 8000 },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "id", "headSha", "source", "category", "severity", "confidence", "title", "description", "evidence", "recommendation", "disposition"],
+      "properties": {
+        "schemaVersion": { "const": "1.0" },
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,128}$" },
+        "headSha": { "$ref": "#/$defs/sha" },
+        "source": { "enum": ["build", "test", "semgrep", "roslyn", "reviewer", "orchestrator"] },
+        "category": { "$ref": "#/$defs/text" },
+        "severity": { "enum": ["critical", "high", "medium", "low", "info"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "description": { "$ref": "#/$defs/text" },
+        "evidence": {
+          "type": "array", "minItems": 1, "maxItems": 20,
+          "items": { "$ref": "#/$defs/evidence" }
+        },
+        "recommendation": { "$ref": "#/$defs/text" },
+        "disposition": { "enum": ["unreviewed", "confirmed", "false-positive", "accepted-risk", "duplicate"] }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "reference", "detail", "startLine", "endLine"],
+      "properties": {
+        "kind": { "enum": ["file", "check", "artifact"] },
+        "reference": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "detail": { "$ref": "#/$defs/text" },
+        "startLine": { "type": ["integer", "null"], "minimum": 1 },
+        "endLine": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "headSha", "name", "platform", "conclusion", "artifact"],
+      "properties": {
+        "schemaVersion": { "const": "1.0" },
+        "headSha": { "$ref": "#/$defs/sha" },
+        "name": { "enum": ["build", "test", "semgrep", "roslyn"] },
+        "platform": { "enum": ["windows", "ubuntu", "independent"] },
+        "conclusion": { "enum": ["passed", "failed", "cancelled", "missing"] },
+        "artifact": { "type": "string", "minLength": 1, "maxLength": 512 }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "repository", "pullRequest", "headSha", "baseSha", "configurationSha", "workflowRunId", "runAttempt", "authorizationId", "authorizedActor"],
+      "properties": {
+        "schemaVersion": { "const": "1.0" },
+        "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+        "pullRequest": { "type": "integer", "minimum": 1 },
+        "headSha": { "$ref": "#/$defs/sha" },
+        "baseSha": { "$ref": "#/$defs/sha" },
+        "configurationSha": { "$ref": "#/$defs/sha" },
+        "workflowRunId": { "type": "integer", "minimum": 1 },
+        "runAttempt": { "type": "integer", "minimum": 1 },
+        "authorizationId": { "$ref": "#/$defs/text" },
+        "authorizedActor": { "type": "string", "pattern": "^[A-Za-z0-9-]{1,39}$" }
+      }
+    },
+    "round": {
+      "type": "object", "additionalProperties": false,
+      "required": ["number", "provider", "model", "selectionReason", "promptVersion", "inputTokens", "outputTokens", "latencyMilliseconds", "estimatedCostUsd", "outcome"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "provider": { "$ref": "#/$defs/text" },
+        "model": { "$ref": "#/$defs/text" },
+        "selectionReason": { "$ref": "#/$defs/text" },
+        "promptVersion": { "$ref": "#/$defs/text" },
+        "inputTokens": { "type": ["integer", "null"], "minimum": 0 },
+        "outputTokens": { "type": ["integer", "null"], "minimum": 0 },
+        "latencyMilliseconds": { "type": "integer", "minimum": 0 },
+        "estimatedCostUsd": { "type": ["number", "null"], "minimum": 0 },
+        "outcome": { "enum": ["completed", "failed", "malformed", "cancelled"] }
+      }
+    },
+    "audit": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "mode", "calibration", "run", "checks", "findings", "rounds", "status", "riskScore", "blockers", "limitations"],
+      "properties": {
+        "schemaVersion": { "const": "1.0" },
+        "mode": { "const": "report-only" },
+        "calibration": { "const": "uncalibrated" },
+        "run": { "$ref": "#/$defs/run" },
+        "checks": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/check" } },
+        "findings": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/finding" } },
+        "rounds": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/round" } },
+        "status": { "enum": ["complete", "incomplete", "stale"] },
+        "riskScore": { "type": "null" },
+        "blockers": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/text" } },
+        "limitations": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/text" } }
+      }
+    }
+  }
+}
