@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Phase | Phase 1 — Report-Only Foundation |
-| Status | Planning |
-| Progress | 1 of 8 workstreams in progress; initial scope and platform decisions recorded |
+| Status | In progress |
+| Progress | P1-01 architecture and failure-policy draft implemented; provider access, limits, and retention remain open |
 | Last updated | October 16, 2026 |
 | Source specification | [Adversarial Reviewer Agent Specification](adversarial-reviewer-agent-spec.md) |
 | Target repository | [cenfosoft/SqlScriptDOM](https://github.com/cenfosoft/SqlScriptDOM) |
@@ -61,7 +61,7 @@ Completed during planning on October 16, 2026:
 - [x] Confirmed repository-specific authoring guidance already exists under `.github/instructions/`, `.github/prompts/`, and `.agents/skills/`.
 - [x] Confirmed the repository pins .NET SDK `8.0.420` but has no existing Python or Node project for orchestration.
 - [x] Selected .NET/C# as the only implementation runtime for orchestration, schemas, provider adapters, metrics, and reporting.
-- [x] Confirmed the C4 model is currently a context-level model and does not yet describe Phase 1 containers or trust boundaries.
+- [x] Confirmed the original C4 model was context-only; expanded it with Phase 1 containers and trust boundaries during P1-01.
 
 ## 5. Proposed Phase 1 Architecture
 
@@ -92,7 +92,7 @@ Runs in a trusted context after validation completes. It MUST NOT execute code f
 7. Computes a provisional risk score deterministically.
 8. Uploads the final audit JSON and updates one non-blocking PR comment.
 
-This split is a proposal pending the remaining security and GitHub-permission decisions in Section 11.
+The split is approved. The event topology, replay protection, provider authentication, and numeric limits still require implementation and verification before secret-bearing execution can be enabled.
 
 ### 5.3 Why the Workflows Are Split
 
@@ -139,6 +139,48 @@ The initial label is `adversarial-review:run`, and the initial authorized GitHub
 
 Provider access must be protected by a GitHub environment requiring approval. The allowlist identity is an authorization control only; account passwords or interactive account credentials must never be stored in the repository or workflow.
 
+### 5.6 Trust Boundaries and Operating Policy
+
+The [C4 context and container model](architecture/workspace.dsl) describes the P1-01 design, not a deployed workflow. The boundaries apply equally to fork and same-repository PRs.
+
+| Boundary | Allowed data flow | Required control |
+|---|---|---|
+| Contributor to validation | PR source and build instructions | No provider credentials; read-only repository permissions. |
+| Validation to trusted reporting | Raw artifacts and manifests | Treat all artifact contents as untrusted. Verify the expected repository, workflow, run attempt, PR, and head SHA using GitHub metadata, then validate schema, size, paths, and checksums. A checksum alone does not establish trust. |
+| Repository to trusted reporting | Orchestrator, prompts, configuration, and analysis policy | Use the trusted default-branch revision, not versions supplied by the PR. Contributor changes to policy are review data only until merged. |
+| Maintainer to paid execution | Label event and environment approval | Verify the authenticated event actor, bind approval to the exact head SHA, and claim a one-shot authorization before provider access. Label presence alone is insufficient. |
+| Trusted reporting to provider | Bounded diff and selected guidance | Send data only after all prerequisites pass. Give the model no execution or repository-write tools. Enforce approved budgets before every request. |
+| Trusted reporting to GitHub | Advisory comment and JSON artifacts | Limit writes to reporting; never mutate source, submit approvals, mark merge-ready, or merge. Escape contributor-controlled Markdown and recheck the head SHA before publication. |
+
+The report must record the trusted configuration revision alongside the evaluated head SHA. A model response is untrusted input, not executable instructions.
+
+Authorization may arrive before or after CI completes. Neither event alone starts inference: the trusted orchestrator must join both pieces of evidence for the same SHA and recheck the PR state after environment approval and before each model round. New commits, draft conversion, or closure stop further calls. A persistent label does not authorize another SHA.
+
+Model history in the bot-authored audit comment and JSON artifacts supports rotation and traceability, but is not by itself a spend ledger or replay lock. P1-04 must implement an atomic claim and budget reservation before inference; reruns and concurrent events must not create a second claim for the same authorization. The storage mechanism remains an implementation decision, and paid execution must stay disabled until it is verified.
+
+### 5.7 Failure Policy and Verification Cases
+
+These are implementation requirements for the approved boundaries, not a replacement for the authoritative CI checks. A skipped or incomplete advisory report must not turn failed CI green.
+
+| Condition | Provider-call behavior | Required visible outcome / verification case |
+|---|---|---|
+| Missing opt-in, unauthorized actor, missing environment approval, or disabled execution | No calls | Record a skipped reason without exposing secrets; a contributor-applied label must not authorize inference. |
+| PR is draft or closed | No new calls | Record skipped state. Test both states before starting and between model rounds. |
+| Head SHA changes after authorization or while awaiting approval | No new calls | Invalidate authorization and mark the run stale; do not overwrite a newer report. |
+| Windows or Ubuntu build/test evidence is missing, pending, cancelled, or failed | No calls | Identify the unavailable or failed checks and retain available raw evidence. Test each matrix leg independently. |
+| Required Semgrep/Roslyn policy or successful analysis evidence is unavailable | No calls | Report incomplete deterministic evidence. Do not represent a pending team-supplied policy as a passing check. |
+| Artifact origin, run attempt, SHA, checksum, schema, size, or safe-path validation fails | No calls | Reject the evidence with an explicit diagnostic. Include tampered and cross-PR artifact fixtures. |
+| Model pool is empty or no model is eligible | No calls | Report incomplete review and list non-secret eligibility reasons. |
+| Required numeric cost, token, time, retry, or round limits are unset or invalid | No calls | Report a configuration error; never substitute an unlimited budget. |
+| Authorization was already consumed, a run is concurrent, or budget cannot be reserved | No calls for the duplicate or unreserved request | Reuse the recorded outcome or report why execution cannot proceed. Verify duplicate label and workflow-rerun cases. |
+| Provider times out, refuses access, or returns an error | Stop unless an explicitly configured bounded retry is permitted | Record the failed attempt and known usage. Do not blindly retry requests with uncertain billing or silently switch models. |
+| Model output is malformed or fails schema validation | Do not accept findings; further calls require configured retry and budget allowances | Preserve a redacted diagnostic and mark review incomplete if the allowed attempts are exhausted. |
+| Risk calculation fails or required evidence is incomplete | No clearance | Publish an incomplete advisory result, never a zero-risk success-shaped fallback. |
+| Comment publication is denied or fails | Do not repeat inference to retry publication | Retain the audit artifact, expose the publication failure in workflow status, and keep existing CI conclusions unchanged. |
+| Previously stored model history is malformed or belongs to another SHA | No calls until history is reconciled | Report invalid history rather than silently resetting selection or replay state. |
+
+Tests for these cases belong to their owning workstreams (P1-02 through P1-08). This policy defines expected behavior; it does not claim those tests or runtime safeguards already exist.
+
 ## 6. Workstream Plan
 
 ### P1-01 — Decisions, Threat Model, and Operating Boundaries
@@ -168,7 +210,10 @@ Provider access must be protected by a GitHub environment requiring approval. Th
 - [ ] Confirm the GitHub model identifiers, endpoint, Actions permission, and authentication mechanism available in the fork.
 - [ ] Define token, time, retry, concurrency, and cost limits.
 - [ ] Define artifact and metrics retention.
-- [ ] Update the C4 model with containers and trust boundaries.
+- [x] Update the [C4 model](architecture/workspace.dsl) with containers and trust boundaries.
+- [x] Document least-privilege data flows, prohibited operations, and trusted configuration provenance in Section 5.6.
+- [x] Define the failure policy and required verification cases in Section 5.7.
+- [ ] Verify replay-claim storage and spend reservation before enabling provider calls.
 
 **Exit criteria**
 
@@ -415,6 +460,9 @@ Work on schemas and baseline definitions can proceed in parallel after M1. Secre
 
 | Date | Update | Evidence / next step |
 |---|---|---|
+| October 16, 2026 | Created local branch `feature/adversarial-reviewer-phase-1` and committed the planning baseline as `2afdd6a`. | README, source specification, and this tracker committed; no remote push performed. |
+| October 16, 2026 | Started P1-01: translated and expanded the C4 model to context/container views; documented trust boundaries, authorization/CI ordering, and explicit failure cases. | [Architecture model](architecture/workspace.dsl), Sections 5.6-5.7. Runtime enforcement and scenario tests remain pending. |
+| October 16, 2026 | P1-01 documentation validation: whitespace and local links checked; semantic Structurizr validation is pending because no CLI is installed and the local Docker daemon is unavailable. | Validate the DSL with Structurizr before declaring the architecture milestone complete. No parser or workflow code changed. |
 | October 16, 2026 | Added the project specification and made it the documentation source of truth. | `docs/adversarial-reviewer-agent-spec.md` |
 | October 16, 2026 | Inventoried existing CI, prompts, skills, runtime files, and architecture. | Findings recorded in Section 4. |
 | October 16, 2026 | Drafted the Phase 1 architecture, workstreams, milestones, Definition of Done, and stakeholder questionnaire. | Await answers to the stakeholder questionnaire, starting with the blocking questions. |
