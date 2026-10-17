@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace AdversarialReview;
@@ -57,10 +58,13 @@ public static partial class ReportRenderer
         StringBuilder output = new(Marker + "\n## Adversarial review (report-only)\n\n");
         output.AppendLine("**Not a merge gate. Risk model: uncalibrated; numeric score unavailable.**\n");
         output.AppendLine($"PR: {Safe(report.Run.Repository)} #{report.Run.PullRequest}");
-        output.AppendLine($"Head SHA: `{report.Run.HeadSha}`  ");
-        output.AppendLine($"Trusted configuration: `{report.Run.ConfigurationSha}`  ");
+        output.AppendLine($"Head SHA: `{Safe(report.Run.HeadSha)}`  ");
+        output.AppendLine($"Trusted configuration: `{Safe(report.Run.ConfigurationSha)}`  ");
         output.AppendLine($"Status: **{report.Status}**; rounds: {report.Rounds.Length}/{report.ExpectedRounds}\n");
-        output.AppendLine($"[Workflow run](https://github.com/{report.Run.Repository}/actions/runs/{report.Run.WorkflowRunId})\n");
+        bool safeRepository = Redact(report.Run.Repository, secrets) == report.Run.Repository;
+        output.AppendLine(safeRepository
+            ? $"[Workflow run](https://github.com/{report.Run.Repository}/actions/runs/{report.Run.WorkflowRunId})\n"
+            : "Workflow link omitted because its repository identifier requires redaction.\n");
         output.AppendLine("### Deterministic checks\n\n| Check | Platform | Conclusion |\n|---|---|---|");
         foreach (CheckResult check in report.Checks)
             output.AppendLine($"| {check.Name} | {check.Platform} | {check.Conclusion} |");
@@ -75,7 +79,9 @@ public static partial class ReportRenderer
             section.AppendLine(Safe(finding.Description) + "\n");
             foreach (Evidence evidence in finding.Evidence)
             {
-                string reference = evidence.Kind == "file"
+                string reference = evidence.Kind == "file" && safeRepository
+                    && Redact(evidence.Reference, secrets) == evidence.Reference
+                    && Redact(report.Run.HeadSha, secrets) == report.Run.HeadSha
                     ? $"[{Safe(evidence.Reference)}:{evidence.StartLine}](https://github.com/{report.Run.Repository}/blob/{report.Run.HeadSha}/{EncodePath(evidence.Reference)}#L{evidence.StartLine}-L{evidence.EndLine})"
                     : Safe(evidence.Reference);
                 section.AppendLine($"- {reference}: {Safe(evidence.Detail)}");
@@ -121,6 +127,26 @@ public static partial class ReportRenderer
         foreach (string secret in knownSecrets.Where(s => !string.IsNullOrEmpty(s)).OrderByDescending(s => s.Length))
             value = value.Replace(secret, "[REDACTED]", StringComparison.Ordinal);
         return TokenPattern().Replace(value, "[REDACTED]");
+    }
+
+    public static void RejectCredentialData(string json, IEnumerable<string> knownSecrets)
+    {
+        using JsonDocument document = JsonDocument.Parse(json);
+        string[] secrets = knownSecrets.Where(s => !string.IsNullOrEmpty(s)).ToArray();
+        void Inspect(JsonElement element)
+        {
+            if (element.ValueKind == JsonValueKind.String)
+            {
+                string value = element.GetString()!;
+                if (Redact(value, secrets) != value)
+                    throw new ContractException("Credential-like JSON content must be removed before review or persistence.");
+            }
+            else if (element.ValueKind == JsonValueKind.Object)
+                foreach (JsonProperty property in element.EnumerateObject()) Inspect(property.Value);
+            else if (element.ValueKind == JsonValueKind.Array)
+                foreach (JsonElement item in element.EnumerateArray()) Inspect(item);
+        }
+        Inspect(document.RootElement);
     }
 
     private static string Escape(string value)

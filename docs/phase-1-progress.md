@@ -299,8 +299,9 @@ A safe and a deliberately failing pilot PR both produce complete evidence withou
 
 - [x] Draft review categories and a provisional severity rubric in the [reviewer prompt](../.github/prompts/adversarial-review.prompt.md); pilot calibration remains pending.
 - [ ] Select which repository instructions are always included and which are selected by changed paths.
-- [ ] Add prompt-injection defenses and delimit untrusted content.
-- [ ] Require evidence for every finding and prohibit unsupported claims.
+- [x] Separate trusted guidance from JSON-delimited untrusted context, with explicit UTF-8 byte bounds and credential rejection.
+- [x] Require evidence and reject invented file/check/artifact references, out-of-range lines, changed SHAs, and maintainer disposition changes.
+- [ ] Evaluate prompt-injection resilience with real models; offline separation is not proof of resilience.
 - [ ] Ensure the reviewer has no tool or permission capable of mutating code or PR state beyond its report.
 - [x] Add repository configuration for provider/model eligibility and ordered selection.
 - [x] Add configurable review-round count and per-authorization/monthly spend-limit fields.
@@ -309,7 +310,7 @@ A safe and a deliberately failing pilot PR both produce complete evidence withou
 - [ ] Implement ordered cyclic selection that restarts at the first entry after exhausting the list.
 - [ ] Test single-model, multi-model, unavailable-provider, exhausted-pool, and retry scenarios.
 - [ ] Record model identifier, prompt version, token usage, latency, and provider request ID when available.
-- [ ] Define behavior when the diff exceeds context limits.
+- [x] Reject oversized contexts explicitly rather than silently truncating; model-specific token budgeting remains pending.
 
 **Exit criteria**
 
@@ -476,6 +477,7 @@ Work on schemas and baseline definitions can proceed in parallel after M1. Secre
 
 | Date | Update | Evidence / next step |
 |---|---|---|
+| October 16, 2026 | Added bounded context building and strict reviewer-response validation without provider access. | Combined suite: 64 passed; CLI build: 0 warnings/errors. Tests cover exact UTF-8 budget boundaries, JSON-escaped secrets, wrong SHA/source/disposition, invented evidence, and malformed responses. No live adversarial loop is claimed. |
 | October 16, 2026 | Added bounded/checksummed evidence manifests and updated untrusted CI to publish build logs/TRX while preserving both OS matrices. Added standalone offline foundation validation. | Combined .NET suite: 59 passed. CLI build: 0 warnings/errors; file-logger capture verified. Modified workflows pass pinned actionlint 1.7.7. Actual Actions matrix and team-supplied analysis policies remain pending. |
 | October 16, 2026 | Verified existing parser behavior after adding the independent review tooling. | `dotnet test Test/SqlDom/UTSqlScriptDom.csproj -c Debug -p:TargetFramework=net8.0 --logger 'console;verbosity=normal'`: 1,176 passed. Existing serialization/discovery warnings were not changed. Synthetic manifest CLI and schema validation also passed. |
 | October 16, 2026 | Ran the baseline CLI against the fork using existing read-only GitHub access; no model API or remote mutation was used. | Collection complete: 1 merged and 1 open human PR, no diagnostics. Aggregate results in P1-07; raw dataset remains outside git. CLI build: 0 warnings/errors. |

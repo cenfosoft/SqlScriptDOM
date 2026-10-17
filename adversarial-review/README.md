@@ -137,3 +137,22 @@ Trusted consumption must verify workflow provenance and safe archive extraction
 and Roslyn evidence remain unavailable until team-owned policies are supplied.
 Missing outputs or a failed manifest step are failures/incomplete evidence, never
 successful deterministic checks.
+
+## Bounded reviewer inputs and outputs
+
+`ReviewContextBuilder.Build` separates trusted guidance from a JSON `untrustedData`
+object. The host supplies an explicit UTF-8 byte budget, bounded file inventory,
+known secret values, and the trusted configuration revision. Oversize contexts fail
+instead of silently truncating away important changes. This is a **byte** bound,
+not model-specific token accounting; token limits still require a provider adapter.
+
+`ReviewerOutput.Parse` accepts only schema-valid JSON arrays, rejects changed SHAs,
+invented source/maintainer dispositions, duplicate finding IDs, out-of-context files,
+out-of-range line numbers, and unknown check/artifact references. It rejects
+credential-like output before persistence, including JSON-escaped known secrets.
+Evidence membership does not prove the finding is true; reviewer validation and
+later human dispositions remain necessary.
+
+These components are offline building blocks, not a running model loop. No live
+provider adapter, persistent authorization claim, monthly spend ledger, or trusted
+PR publisher is enabled.

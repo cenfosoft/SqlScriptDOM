@@ -109,9 +109,12 @@ public static class Contracts
         && !path.Contains('\\') && !path.Contains(':') && !path.Any(char.IsControl)
         && path.Split('/').All(part => part.Length > 0 && part is not ("." or ".."));
 
+    public static bool IsSha(string value) =>
+        value.Length == 40 && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
+
     private static JsonSchema LoadSchema(string name)
     {
-        if (name is not ("contracts" or "finding" or "check-result" or "review-run" or "audit-report" or "configuration" or "evidence-manifest"))
+        if (name is not ("contracts" or "finding" or "check-result" or "review-run" or "audit-report" or "configuration" or "evidence-manifest" or "reviewer-output"))
             throw new ArgumentException("Unknown schema name.", nameof(name));
         var assembly = typeof(Contracts).Assembly;
         string resourceName = assembly.GetManifestResourceNames()

@@ -91,6 +91,10 @@ public sealed class AuditTests
         Assert.IsFalse(output.Contains("ghp_12345678901234567890", StringComparison.Ordinal));
         StringAssert.Contains(output, "REDACTED");
         StringAssert.StartsWith(output, ReportRenderer.Marker);
+        string path = fixture.Evidence[0].Reference;
+        string redactedLink = ReportRenderer.Render(Report([fixture]), [path]);
+        Assert.IsFalse(redactedLink.Contains(path, StringComparison.Ordinal));
+        Assert.IsFalse(redactedLink.Contains("/blob/", StringComparison.Ordinal));
     }
 
     [TestMethod]
