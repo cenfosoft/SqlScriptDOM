@@ -45,8 +45,15 @@ internal static class ReviewCommand
                     await WriteNewFileAsync(output, ReportRenderer.Render(audit));
                     Console.WriteLine("Advisory Markdown written; no PR comment was published.");
                     return 0;
+                case ["manifest", string directory, string check, string platform, string conclusion]:
+                    EvidenceManifest manifest = EvidenceManifest.Create(
+                        directory, ReadGitHubIdentity(), check, platform, conclusion);
+                    await WriteNewFileAsync(Path.Combine(directory, EvidenceManifest.FileName),
+                        Contracts.Write(manifest, "evidence-manifest"));
+                    Console.WriteLine("SHA-bound evidence manifest written. Authenticity still requires trusted GitHub metadata verification.");
+                    return 0;
                 default:
-                    Console.Error.WriteLine("Usage: validate-config <path> | validate <schema-name> <path> | render <audit.json> <output.md> | baseline <owner> <repo> <output.json> [months] [max-pages]");
+                    Console.Error.WriteLine("Usage: validate-config <path> | validate <schema-name> <path> | render <audit.json> <output.md> | baseline <owner> <repo> <output.json> [months] [max-pages] | manifest <directory> <check> <platform> <conclusion>");
                     return 2;
             }
         }
@@ -81,5 +88,22 @@ internal static class ReviewCommand
         await using FileStream stream = new(path, FileMode.CreateNew, FileAccess.Write);
         await using StreamWriter writer = new(stream);
         await writer.WriteAsync(content);
+    }
+
+    private static EvidenceIdentity ReadGitHubIdentity()
+    {
+        string Required(string name) => Environment.GetEnvironmentVariable(name)
+            ?? throw new ContractException($"Required GitHub metadata is missing: {name}.");
+        using JsonDocument eventData = JsonDocument.Parse(ReadDocument(Required("GITHUB_EVENT_PATH")));
+        JsonElement root = eventData.RootElement;
+        if (!root.TryGetProperty("number", out JsonElement number) || !number.TryGetInt32(out int pr)
+            || !root.TryGetProperty("pull_request", out JsonElement pullRequest)
+            || !pullRequest.TryGetProperty("head", out JsonElement head)
+            || !head.TryGetProperty("sha", out JsonElement sha))
+            throw new ContractException("Expected a GitHub pull_request event with a head SHA.");
+        return new(Required("GITHUB_REPOSITORY"), pr,
+            sha.GetString() ?? throw new ContractException("PR head SHA is missing."),
+            long.Parse(Required("GITHUB_RUN_ID"), System.Globalization.CultureInfo.InvariantCulture),
+            int.Parse(Required("GITHUB_RUN_ATTEMPT"), System.Globalization.CultureInfo.InvariantCulture));
     }
 }

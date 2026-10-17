@@ -112,3 +112,28 @@ Snapshots can be recalculated offline through `BaselineCalculator.Calculate`.
 Raw snapshots contain PR numbers and timestamps, not source, prompts, or credentials.
 Storage, retention, and access policy still require team approval; do not automatically
 commit or upload a raw dataset.
+
+## Deterministic evidence
+
+`manifest <directory> <check> <platform> <conclusion>` inventories raw evidence and
+writes `manifest.json`. It reads repository, PR head, workflow run, and attempt from
+the standard GitHub Actions environment/event file. The manifest records SHA-256,
+byte sizes, check identity, platform, and conclusion. Empty evidence, symbolic links,
+excessive nesting, more than 1,000 files, files over 20 MiB, and totals over 50 MiB
+are rejected. `EvidenceManifest.Verify` requires independently obtained trusted run
+metadata and rejects missing, modified, extra, or duplicate files. The manifest does
+not attest that contributor-supplied code or logs are honest.
+
+The [existing PR workflow](../.github/workflows/pr-validation.yml) retains both OS
+matrices and build/test commands while publishing raw build logs and TRX results,
+including failures where output is available. Drafts are skipped; ready-for-review
+events start validation. [Foundation validation](../.github/workflows/adversarial-review-validation.yml)
+runs the offline tool tests on Windows and Ubuntu, without model credentials or PR
+write permission. Artifacts currently use the repository's existing retention setting;
+the team must approve a retention policy before live review.
+
+Trusted consumption must verify workflow provenance and safe archive extraction
+**before** parsing a manifest; checksum validation alone is insufficient. Semgrep
+and Roslyn evidence remain unavailable until team-owned policies are supplied.
+Missing outputs or a failed manifest step are failures/incomplete evidence, never
+successful deterministic checks.

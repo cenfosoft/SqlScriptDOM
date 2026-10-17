@@ -111,7 +111,7 @@ public static class Contracts
 
     private static JsonSchema LoadSchema(string name)
     {
-        if (name is not ("contracts" or "finding" or "check-result" or "review-run" or "audit-report" or "configuration"))
+        if (name is not ("contracts" or "finding" or "check-result" or "review-run" or "audit-report" or "configuration" or "evidence-manifest"))
             throw new ArgumentException("Unknown schema name.", nameof(name));
         var assembly = typeof(Contracts).Assembly;
         string resourceName = assembly.GetManifestResourceNames()

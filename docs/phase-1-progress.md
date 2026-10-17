@@ -55,9 +55,9 @@ Completed during planning on October 16, 2026:
 - [x] Located the existing PR workflow at `.github/workflows/pr-validation.yml`.
 - [x] Confirmed CI currently builds and tests on Windows and Ubuntu.
 - [x] Confirmed actions are pinned to immutable commit SHAs.
-- [x] Confirmed the workflow currently has no explicit top-level permission declaration.
+- [x] Confirmed the original workflow had no explicit top-level permission declaration; added read-only permissions in P1-03.
 - [x] Confirmed there is no Semgrep configuration or static-analysis report pipeline.
-- [x] Confirmed there is no normalized finding schema, audit schema, reviewer prompt, risk engine, PR audit comment, or metrics collector.
+- [x] Confirmed the initial repository lacked normalized schemas, reviewer prompt, audit engine, PR audit comment, and metrics collector; offline contracts/reporting/metrics are now implemented, while live PR reporting remains pending.
 - [x] Confirmed repository-specific authoring guidance already exists under `.github/instructions/`, `.github/prompts/`, and `.agents/skills/`.
 - [x] Confirmed the repository pins .NET SDK `8.0.420` but has no existing Python or Node project for orchestration.
 - [x] Selected .NET/C# as the only implementation runtime for orchestration, schemas, provider adapters, metrics, and reporting.
@@ -256,7 +256,7 @@ All producers and consumers validate contracts, and intentionally malformed fixt
 
 ### P1-03 — Deterministic Checks and Evidence Artifacts
 
-**Status:** Not started
+**Status:** In progress (build/test artifacts and offline validation wired; analysis policy and live matrix verification pending)
 
 **Deliverables**
 
@@ -268,13 +268,16 @@ All producers and consumers validate contracts, and intentionally malformed fixt
 **Tasks**
 
 - [x] Preserve the current Windows and Ubuntu matrix and require both results before reporting.
-- [ ] Preserve existing build and full-test behavior while adding machine-readable summaries.
+- [x] Preserve existing build and full-test commands while adding raw logs, TRX results, and SHA-bound manifests.
 - [ ] Define focused-test selection; full tests remain mandatory for grammar changes.
 - [ ] Select and pin Semgrep rules and version.
 - [ ] Integrate the team-supplied Semgrep rules and Roslyn analyzer policy when available.
 - [ ] Add secret scanning or document which existing GitHub control supplies it.
 - [ ] Set artifact names, size limits, retention, and failure behavior.
-- [ ] Ensure artifact upload uses `if: always()` where evidence must survive failures.
+- [x] Ensure artifact upload uses `if: always()` where evidence must survive failures.
+- [x] Add explicit read-only workflow permissions and disable checkout credential persistence.
+- [x] Add offline Windows/Ubuntu foundation validation without model credentials.
+- [ ] Validate the changed workflows on actual Windows/Ubuntu Actions runs; local macOS tests are not a proxy.
 - [ ] Skip all LLM calls when either authoritative matrix leg fails.
 
 **Exit criteria**
@@ -294,14 +297,14 @@ A safe and a deliberately failing pilot PR both produce complete evidence withou
 
 **Tasks**
 
-- [ ] Define review categories and severity rubric.
+- [x] Draft review categories and a provisional severity rubric in the [reviewer prompt](../.github/prompts/adversarial-review.prompt.md); pilot calibration remains pending.
 - [ ] Select which repository instructions are always included and which are selected by changed paths.
 - [ ] Add prompt-injection defenses and delimit untrusted content.
 - [ ] Require evidence for every finding and prohibit unsupported claims.
 - [ ] Ensure the reviewer has no tool or permission capable of mutating code or PR state beyond its report.
-- [ ] Add repository configuration for provider/model eligibility and selection policy.
-- [ ] Add configurable review-round count and per-authorization/monthly spend-limit fields.
-- [ ] Keep paid execution disabled until required spend-limit values and enforcement behavior are approved.
+- [x] Add repository configuration for provider/model eligibility and ordered selection.
+- [x] Add configurable review-round count and per-authorization/monthly spend-limit fields.
+- [x] Keep paid execution disabled until required spend-limit values and enforcement behavior are approved.
 - [ ] Persist model history per PR head SHA in the audit comment and JSON artifacts.
 - [ ] Implement ordered cyclic selection that restarts at the first entry after exhausting the list.
 - [ ] Test single-model, multi-model, unavailable-provider, exhausted-pool, and retry scenarios.
@@ -473,13 +476,15 @@ Work on schemas and baseline definitions can proceed in parallel after M1. Secre
 
 | Date | Update | Evidence / next step |
 |---|---|---|
+| October 16, 2026 | Added bounded/checksummed evidence manifests and updated untrusted CI to publish build logs/TRX while preserving both OS matrices. Added standalone offline foundation validation. | Combined .NET suite: 59 passed. CLI build: 0 warnings/errors; file-logger capture verified. Modified workflows pass pinned actionlint 1.7.7. Actual Actions matrix and team-supplied analysis policies remain pending. |
+| October 16, 2026 | Verified existing parser behavior after adding the independent review tooling. | `dotnet test Test/SqlDom/UTSqlScriptDom.csproj -c Debug -p:TargetFramework=net8.0 --logger 'console;verbosity=normal'`: 1,176 passed. Existing serialization/discovery warnings were not changed. Synthetic manifest CLI and schema validation also passed. |
 | October 16, 2026 | Ran the baseline CLI against the fork using existing read-only GitHub access; no model API or remote mutation was used. | Collection complete: 1 merged and 1 open human PR, no diagnostics. Aggregate results in P1-07; raw dataset remains outside git. CLI build: 0 warnings/errors. |
 | October 16, 2026 | Added .NET baseline collector and CLI: current-state snapshot, timeline-derived readiness, six-month configurable window, merged-only median, and separate open censored cohort. | 36 metrics tests pass; combined suite 56 passed. [Command and metric definitions](../adversarial-review/README.md). Raw-data retention and access approval remain pending. |
 | October 16, 2026 | Added offline advisory audit generation, cross-record semantic validation, bounded/redacted Markdown rendering, and an initial report-only reviewer prompt. | Foundation and audit test selector: 20 passed. Numeric scoring deliberately remains unavailable pending calibration decisions. No PR publication or provider requests implemented. |
 | October 16, 2026 | Implemented P1-02 offline foundation: .NET library, CLI, strict local schemas, disabled configuration, authorization/check preflight, and cyclic model selection. | `dotnet test adversarial-review/tests/AdversarialReview.Tests/AdversarialReview.Tests.csproj -c Debug --filter FullyQualifiedName~FoundationTests`: 13 passed. CLI `validate-config` reports six execution blockers; valid finding fixture accepted. [Tooling and commands](../adversarial-review/README.md). Paid access, anti-replay storage, and spend enforcement remain unimplemented. |
 | October 16, 2026 | Created local branch `feature/adversarial-reviewer-phase-1` and committed the planning baseline as `2afdd6a`. | README, source specification, and this tracker committed; no remote push performed. |
 | October 16, 2026 | Started P1-01: translated and expanded the C4 model to context/container views; documented trust boundaries, authorization/CI ordering, and explicit failure cases. | [Architecture model](architecture/workspace.dsl), Sections 5.6-5.7. Runtime enforcement and scenario tests remain pending. |
-| October 16, 2026 | P1-01 documentation validation: whitespace and local links checked; semantic Structurizr validation is pending because no CLI is installed and the local Docker daemon is unavailable. | Validate the DSL with Structurizr before declaring the architecture milestone complete. No parser or workflow code changed. |
+| October 16, 2026 | P1-01 documentation validation initially lacked a Structurizr runtime. Resolved by using the standalone official CLI v2025.11.09 with Java, without Docker. | `StructurizrCliApplication validate -workspace docs/architecture/workspace.dsl`: passed. Architecture acceptance still depends on provider/limits/retention decisions. |
 | October 16, 2026 | Added the project specification and made it the documentation source of truth. | `docs/adversarial-reviewer-agent-spec.md` |
 | October 16, 2026 | Inventoried existing CI, prompts, skills, runtime files, and architecture. | Findings recorded in Section 4. |
 | October 16, 2026 | Drafted the Phase 1 architecture, workstreams, milestones, Definition of Done, and stakeholder questionnaire. | Await answers to the stakeholder questionnaire, starting with the blocking questions. |

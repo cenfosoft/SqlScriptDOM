@@ -1,0 +1,38 @@
+name: adversarial-review-validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  foundation:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Test offline review foundation
+        run: dotnet test adversarial-review/tests/AdversarialReview.Tests/AdversarialReview.Tests.csproj -c Debug --logger trx --results-directory "${{ runner.temp }}/review-foundation-results"
+      - name: Build offline CLI
+        run: dotnet build adversarial-review/src/AdversarialReview.Cli/AdversarialReview.Cli.csproj -c Debug
+      - name: Validate disabled configuration
+        run: dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- validate-config adversarial-review/config/review.json
+      - name: Upload foundation test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: review-foundation-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/review-foundation-results/
