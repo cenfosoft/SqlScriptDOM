@@ -52,8 +52,9 @@ supplied by the host; it must not probe a provider by spending tokens.
 `ReviewGate` is a pure, offline preflight, **not** an authorization service. Its inputs
 must eventually come from authenticated GitHub metadata, verified artifacts, and a
 protected environment. A successful result means eligible for an atomic authorization
-claim and spend reservation, not eligible to call a model immediately. Persistent
-anti-replay storage and monthly budget reservations are not implemented.
+claim and spend reservation, not eligible to call a model immediately. The SQLite
+implementation below provides these controls for a shared persistent host; hosted
+Actions deployment and trusted event admission are not configured.
 
 The mandatory evidence set currently includes build/test results on both Windows and
 Ubuntu, plus independent Semgrep and Roslyn results. Missing team-supplied analysis
@@ -158,9 +159,9 @@ credential-like output before persistence, including JSON-escaped known secrets.
 Evidence membership does not prove the finding is true; reviewer validation and
 later human dispositions remain necessary.
 
-These components are offline building blocks, not a running model loop. No live
-provider adapter, persistent authorization claim, monthly spend ledger, or trusted
-reporting workflow is enabled.
+These components are offline building blocks. The bounded engine and SQLite ledger
+can be exercised with fake providers, but no live provider adapter, deployed ledger,
+or trusted reporting workflow is enabled.
 
 ## PR comment client (not wired to a live workflow)
 
@@ -205,9 +206,10 @@ protection are implemented and approved.
 2. Approve round, token, timeout, retry, per-authorization USD, and monthly USD
    limits. Configure provider-side limits as defense in depth; do not assume an
    application estimate is an enforceable billing cap.
-3. Implement/test a persistent atomic authorization claim and monthly spend
-   reservation. Handle crashes, concurrent PRs, retries with uncertain billing, and
-   repeated workflow attempts before any inference request can be made.
+3. Provision and verify a shared persistent host/store for atomic authorization and
+   monthly spend reservations. The SQLite ledger is locally tested; deployment must
+   preserve its single-store guarantees across crashes, concurrent PRs, uncertain
+   billing, and workflow attempts before any inference request can be made.
 4. Create the protected reporting environment with the approved reviewer identity
    and restrict workflow execution to trusted default-branch code. Do not grant
    an untrusted validation job environment access.
@@ -270,3 +272,35 @@ must authenticate its origin and persist each outcome before acknowledging a run
 Synthetic tests exercise complete rotation, resumed rotation, stale heads, denied
 claims, replay, budget exhaustion, malformed output, timeouts, and usage violations.
 No live provider is implemented or invoked by these tests.
+
+## Persistent authorization and spend ledger
+
+`SqliteReviewSpendLedger` implements atomic admission using an immediate SQLite
+transaction. The host must supply **one trusted persistent database shared by every
+worker for a repository**. A fresh database on each GitHub-hosted runner is not
+durable storage or a repository-wide budget and must never be used as such.
+This implementation is suitable for a single persistent host with local shared
+SQLite storage; independent hosted runners require a separately designed shared
+transactional service or serialized persistent executor before activation.
+
+Every authorization event reserves its entire configured maximum cost against the
+repository's UTC calendar-month budget, across PRs. The same event cannot be reused
+for another PR or SHA. Lowered monthly limits are retained; automatic limit increases
+do not retroactively expand that month's ledger. Claims expire at the next UTC month
+boundary; the engine checks the lease and bounds cancellation to that boundary.
+Delayed settlement remains possible, but provider billing that crosses the boundary
+requires reconciliation. Cancellation cannot guarantee a remote provider stopped
+billing; provider-side limits remain essential.
+
+Accounting uses integer microUSD, not floating-point currency. Sub-microUSD values,
+overflow, invalid claims, missing claims, altered claims, out-of-order rounds,
+conflicting duplicate records, and overspending are rejected. Identical settlement
+retries are idempotent. Unknown usage is persisted as unknown and blocks further
+calls. Full reservations are **never automatically released**, even for unused
+rounds or failures; this is intentionally conservative until an explicit reconciliation
+policy is approved.
+
+The database stores claim identity, accounting, usage and outcome metadata, not
+prompts or provider response bodies. Storage/corruption/lock errors remain visible
+and stop execution. Database protection, backup, retention, and access are host
+responsibilities; do not put the ledger in git, artifacts, or mutable PR content.

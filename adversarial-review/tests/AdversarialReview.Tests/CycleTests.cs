@@ -23,6 +23,7 @@ public sealed class CycleTests
     {
         public bool RejectClaim { get; set; }
         public bool Claimed { get; private set; }
+        public DateTimeOffset Expires { get; set; } = DateTimeOffset.UtcNow.AddMinutes(1);
         public List<ReviewRound> Records { get; } = [];
         public Task ClaimAsync(CycleClaim claim, CancellationToken cancellationToken)
         {
@@ -36,7 +37,7 @@ public sealed class CycleTests
             return Task.CompletedTask;
         }
         public Task<DateTimeOffset> EnsureActiveAsync(CycleClaim claim, CancellationToken cancellationToken) =>
-            Task.FromResult(DateTimeOffset.UtcNow.AddMinutes(1));
+            Task.FromResult(Expires);
     }
 
     private static Task<CycleResult> Run(
@@ -168,5 +169,45 @@ public sealed class CycleTests
             config with { Limits = config.Limits with { TimeoutSeconds = 1 } });
         Assert.AreEqual(1, provider.Requests.Count);
         Assert.AreEqual("incomplete", result.Report.Status);
+    }
+
+    [TestMethod]
+    public async Task ExpiredLeasePreventsProviderCall()
+    {
+        var provider = new Provider();
+        CycleResult result = await Run(provider, new Ledger { Expires = DateTimeOffset.UtcNow.AddMinutes(-1) });
+        Assert.AreEqual(0, provider.Requests.Count);
+        Assert.AreEqual("incomplete", result.Report.Status);
+    }
+
+    [TestMethod]
+    public async Task CompleteCycleWithSqlitePreventsReplayAcrossInstances()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"scriptdom-cycle-{Guid.NewGuid():N}.db");
+        try
+        {
+            var provider = new Provider();
+            var config = FoundationTests.Config();
+            var context = new ReviewContext(FoundationTests.Sha, FoundationTests.OtherSha,
+                "Trusted instructions", "Untrusted diff", [], [], []);
+            var authorization = new AuthorizationContext("allancascante", "adversarial-review:run",
+                FoundationTests.Sha, "label-event-1", true, false);
+            Task<CycleResult> Invoke(IReviewSpendLedger ledger) =>
+                new ReviewCycle(provider, ledger).RunAsync(config, FoundationTests.Run(), authorization,
+                    context, FoundationTests.Checks(), [],
+                    _ => Task.FromResult(new PullRequestState(FoundationTests.Sha, true, false)),
+                    10000, [], CancellationToken.None);
+            CycleResult result = await Invoke(new SqliteReviewSpendLedger(path));
+            Assert.AreEqual("complete", result.Report.Status);
+            Assert.AreEqual(3, provider.Requests.Count);
+            await Assert.ThrowsExceptionAsync<ContractException>(() => Invoke(new SqliteReviewSpendLedger(path)));
+            Assert.AreEqual(3, provider.Requests.Count);
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(path + "-wal");
+            File.Delete(path + "-shm");
+        }
     }
 }

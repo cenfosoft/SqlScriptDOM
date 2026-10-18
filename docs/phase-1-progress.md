@@ -4,7 +4,7 @@
 |---|---|
 | Phase | Phase 1 — Report-Only Foundation |
 | Status | In progress — trusted integration and pilot blocked by outstanding approved inputs |
-| Progress | Offline contracts, preflight/rotation, reporting, context validation, comment client, evidence CI, and metrics implemented; 73 offline tests pass; paid execution disabled |
+| Progress | Offline foundation plus bounded review engine and persistent SQLite reservation ledger implemented; 103 tests pass; paid execution disabled |
 | Last updated | October 16, 2026 |
 | Source specification | [Adversarial Reviewer Agent Specification](adversarial-reviewer-agent-spec.md) |
 | Target repository | [cenfosoft/SqlScriptDOM](https://github.com/cenfosoft/SqlScriptDOM) |
@@ -165,7 +165,7 @@ The report must record the trusted configuration revision alongside the evaluate
 
 Authorization may arrive before or after CI completes. Neither event alone starts inference: the trusted orchestrator must join both pieces of evidence for the same SHA and recheck the PR state after environment approval and before each model round. New commits, draft conversion, or closure stop further calls. A persistent label does not authorize another SHA.
 
-Model history in the bot-authored audit comment and JSON artifacts supports rotation and traceability, but is not by itself a spend ledger or replay lock. P1-04 must implement an atomic claim and budget reservation before inference; reruns and concurrent events must not create a second claim for the same authorization. The storage mechanism remains an implementation decision, and paid execution must stay disabled until it is verified.
+Model history in the bot-authored audit comment and JSON artifacts supports rotation and traceability, but is not by itself a spend ledger or replay lock. P1-04 now includes a tested atomic SQLite claim and full-cycle monthly reservation implementation for a shared persistent host. A fresh database on each hosted Actions runner does not satisfy this requirement. Deployment/storage provisioning and authenticated event admission remain unverified, so paid execution stays disabled.
 
 ### 5.7 Failure Policy and Verification Cases
 
@@ -223,6 +223,7 @@ Tests for these cases belong to their owning workstreams (P1-02 through P1-08). 
 - [x] Document least-privilege data flows, prohibited operations, and trusted configuration provenance in Section 5.6.
 - [x] Define the failure policy and required verification cases in Section 5.7.
 - [ ] Verify replay-claim storage and spend reservation before enabling provider calls.
+- [x] Implement/test transactional SQLite claims, full-cycle reservations, microUSD accounting, replay prevention, ordered settlement, and UTC month leases locally.
 
 **Exit criteria**
 
@@ -490,7 +491,7 @@ pilot/acceptance criteria. Remaining work must proceed in this order:
 |---|---|---|---|
 | 1 | Confirm GitHub model entitlement, identifiers, endpoint, auth, permissions, and terms; approve numeric limits and retention | Recorded decisions, protected-environment configuration, no secrets in git | Repository owner / team |
 | 2 | Supply Semgrep/Roslyn policies and approve context/scoring choices | Pinned rule/analyzer inputs and approved reporting policy | Team |
-| 3 | Implement persistent authorization claims, repository-wide spend reservation, trusted event/artifact join, provider adapter, bounded rounds, and history | Crash/replay/concurrency/billing-uncertainty tests with a fake provider before approved live calls | Implementation |
+| 3 | Provision a shared persistent executor/store for the tested ledger, implement trusted event/artifact join and a supported provider adapter, and persist auditable history | Local fake-provider/SQLite tests pass; deployment must prove shared reservations, authenticated admission, and bounded live requests | Implementation |
 | 4 | Wire trusted publication and failure artifacts with per-PR serialization | Same-repository and external-fork Actions runs; no untrusted code execution or secret exposure | Implementation / repository owner |
 | 5 | Verify the actual Windows/Ubuntu matrix, calibrate findings, collect telemetry/dispositions, and complete the pilot | Pilot PR/run links, approved baseline/data policy, team sign-off on every Definition of Done item | Entire team |
 
@@ -516,6 +517,7 @@ Work on schemas and baseline definitions can proceed in parallel after M1. Secre
 
 | Date | Update | Evidence / next step |
 |---|---|---|
+| October 16, 2026 | Implemented transactional SQLite authorization/spend storage and integrated per-round lease validation with the bounded engine. | Combined suite: 103 passed; CLI build: 0 warnings/errors. Includes concurrent admission, replay, unknown billing, month rollover, and fake-provider cycle with persistent replay rejection across ledger instances. Shared deployment and provider activation remain blocked. |
 | October 16, 2026 | Continued implementation with a bounded review-cycle engine and fake-provider integration cases: claim-before-call, fresh PR state/lease per round, ordered model rotation, usage validation, cancellation settlement, and no blind retries. | Provider and ledger are injected; no paid requests are enabled. Also verified that the requested GitHub Models API has been retired; see D-022. |
 | October 16, 2026 | Documented operator procedures and explicit activation/resume dependencies; retained all unmet pilot/approval criteria as open. | [Tooling runbook](../adversarial-review/README.md). Final offline suite: 73 passed; parser suite: 1,176 passed. No live model workflow is enabled. |
 | October 16, 2026 | Implemented an idempotent GitHub audit-comment client with bot-only targets, run ordering, pre/post SHA checks, and explicit duplicate/permission failures. | Combined suite: 73 passed (9 publisher cases). Synthetic HTTP tests only; no remote comment was created. Trusted workflow concurrency, artifact failure handling, and live pilot remain pending. |

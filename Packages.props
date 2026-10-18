@@ -24,5 +24,6 @@
     <PackageReference Update="Newtonsoft.Json" Version="13.0.1" />
     <PackageReference Update="coverlet.collector" Version="6.0.0" />
     <PackageReference Update="JsonSchema.Net" Version="7.3.4" />
+    <PackageReference Update="Microsoft.Data.Sqlite" Version="8.0.11" />
   </ItemGroup>
 </Project>
