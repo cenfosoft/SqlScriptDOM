@@ -87,6 +87,12 @@ The reviewer MUST support an ordered, repository-configured JSON pool of provide
 
 Model-pool configuration MUST contain identifiers and selection policy only; credentials MUST remain in GitHub secrets or an approved secret manager. The audit trail MUST record the selected provider, model, cycle, selection reason, usage, latency, and outcome. The orchestrator MUST define fallback behavior for unavailable providers, missing credentials, a single eligible model, and an exhausted pool.
 
+The initial approved provider integration is the .NET GitHub Copilot SDK, not the
+retired GitHub Models inference API. Exact model IDs MUST come from account discovery;
+automatic model-selection aliases MUST NOT replace explicit rotation. Catalog discovery
+MUST NOT send inference prompts and MUST NOT be treated as proof of deployment
+entitlement or approved spending limits.
+
 ### 4.3 Risk Scoring Engine
 
 The engine MUST combine deterministic signals and adversarial findings into a normalized score. It MUST NOT allow an LLM to silently override failed mandatory checks.

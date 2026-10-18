@@ -27,6 +27,7 @@ public static class ReviewContextBuilder
         if (Encoding.UTF8.GetByteCount(json) > maximumUtf8Bytes)
             throw new ContractException("Review context exceeds its UTF-8 byte budget; no silent truncation is permitted.");
         ReportRenderer.RejectCredentialData(json, knownSecrets);
+        Contracts.Validate(json, "review-context");
         return json;
     }
 

@@ -13,5 +13,9 @@
     "perAuthorizationUsd": null,
     "monthlyUsd": null
   },
-  "models": []
+  "models": [
+    { "provider": "github-copilot", "model": "gpt-5.4-mini", "enabled": true },
+    { "provider": "github-copilot", "model": "claude-haiku-4.5", "enabled": true },
+    { "provider": "github-copilot", "model": "mai-code-1.1-flash", "enabled": true }
+  ]
 }

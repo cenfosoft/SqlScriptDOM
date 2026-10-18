@@ -4,5 +4,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../AdversarialReview.Core/AdversarialReview.Core.csproj" />
+    <ProjectReference Include="../AdversarialReview.Copilot/AdversarialReview.Copilot.csproj" />
   </ItemGroup>
 </Project>

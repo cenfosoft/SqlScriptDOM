@@ -4,7 +4,7 @@
 |---|---|
 | Phase | Phase 1 — Report-Only Foundation |
 | Status | In progress — trusted integration and pilot blocked by outstanding approved inputs |
-| Progress | Offline foundation plus bounded review engine and persistent SQLite reservation ledger implemented; 103 tests pass; paid execution disabled |
+| Progress | Foundation, bounded engine, SQLite ledger, and Copilot SDK adapter implemented; metadata-only account discovery verified; 114 tests pass; paid execution disabled |
 | Last updated | October 16, 2026 |
 | Source specification | [Adversarial Reviewer Agent Specification](adversarial-reviewer-agent-spec.md) |
 | Target repository | [cenfosoft/SqlScriptDOM](https://github.com/cenfosoft/SqlScriptDOM) |
@@ -121,16 +121,34 @@ The selection policy must:
 8. Record selection reason, provider, model, cycle number, prompt version, usage, latency, and result.
 9. Keep credentials outside the configuration file and map configured providers to GitHub secret names.
 
-Providers may retain requests. The initial adapter targets model access supplied through GitHub, while keeping the provider interface extensible. Exact GitHub model identifiers, endpoint, Actions permission, authentication mechanism, and retention disclosures still need to be confirmed in the fork.
+Providers may retain requests. The approved adapter uses the .NET GitHub Copilot
+SDK with an extensible provider interface. Local account discovery is verified;
+protected-host credentials, Actions entitlement, exact billing controls, and retention
+disclosures still need deployment verification.
 
 **Provider availability update (October 16, 2026):** The current
 [GitHub Models documentation](https://docs.github.com/en/github-models) states
 that GitHub Models was fully retired on July 30, 2026, including its catalog,
 inference API, and BYOK. GitHub Copilot is a separate service. The approved
 "GitHub-provided models" starting point therefore cannot be implemented as a
-GitHub Models API adapter. Keep execution disabled; choose a supported provider
-and verify CI/API entitlement before activation. Do not substitute a personal
-Copilot/chat subscription or silently route requests to a different provider.
+GitHub Models API adapter. This retirement does **not** mean Copilot SDK is unavailable.
+The owner subsequently approved the Copilot SDK recommendation (D-023); that is an
+explicit provider choice, not a silent substitution of subscription credentials.
+Keep paid execution disabled until CI entitlement, billing enforcement, and limits
+are verified.
+
+**Copilot integration update (October 18, 2026 UTC):** Pinned
+`GitHub.Copilot.SDK` 1.0.22/native runtime 1.0.98, added `list-models`, and verified
+metadata-only discovery with the existing local account. No inference prompt or
+repository content was sent. The catalog returned 23 entries; selected policy-enabled
+candidates are `gpt-5.4-mini`, `claude-haiku-4.5`, and `mai-code-1.1-flash`.
+They are configured in that order under `github-copilot`; global execution remains
+disabled and all unapproved limits remain null. Gemini was not in the returned
+catalog. Unknown policy entries and `auto` are not inference-eligible. See the
+[integration/runbook](../adversarial-review/README.md#github-copilot-sdk-and-metadata-only-model-discovery).
+The report-only adapter has offline coverage, but live inference, billing conversion,
+and hard cap behavior have **not** been verified; SDK session ceilings are not a
+substitute for approved provider-side spending enforcement.
 
 ### 5.5 Authorized Paid-Review Gate
 
@@ -296,7 +314,7 @@ A safe and a deliberately failing pilot PR both produce complete evidence withou
 
 ### P1-04 — Adversarial Reviewer
 
-**Status:** In progress (offline prompt and rotation only)
+**Status:** In progress (prompt, bounded engine, Copilot adapter, and metadata discovery implemented; live inference/pilot pending)
 
 **Deliverables**
 
@@ -313,12 +331,13 @@ A safe and a deliberately failing pilot PR both produce complete evidence withou
 - [x] Require evidence and reject invented file/check/artifact references, out-of-range lines, changed SHAs, and maintainer disposition changes.
 - [ ] Evaluate prompt-injection resilience with real models; offline separation is not proof of resilience.
 - [ ] Ensure the reviewer has no tool or permission capable of mutating code or PR state beyond its report.
+- [x] Implement and test SDK Empty-mode isolation, an empty tool allowlist, permission rejection, and disabled repository discovery; deployed behavior still requires pilot verification.
 - [x] Add repository configuration for provider/model eligibility and ordered selection.
 - [x] Add configurable review-round count and per-authorization/monthly spend-limit fields.
 - [x] Keep paid execution disabled until required spend-limit values and enforcement behavior are approved.
 - [ ] Persist model history per PR head SHA in the audit comment and JSON artifacts.
-- [ ] Implement ordered cyclic selection that restarts at the first entry after exhausting the list.
-- [ ] Test single-model, multi-model, unavailable-provider, exhausted-pool, and retry scenarios.
+- [x] Implement ordered cyclic selection that restarts at the first entry after exhausting the list.
+- [x] Test single-model, multi-model, unavailable-provider, exhausted-pool, and no-blind-retry scenarios with injected providers.
 - [ ] Record model identifier, prompt version, token usage, latency, and provider request ID when available.
 - [x] Reject oversized contexts explicitly rather than silently truncating; model-specific token budgeting remains pending.
 
@@ -439,10 +458,10 @@ All Definition of Done items have linked evidence and the team approves a report
 
 ## 7. Planned Deliverables and Repository Layout
 
-The implemented offline foundation uses .NET/C# and the following layout. The
-secret-bearing reporting workflow and provider adapter remain deferred until
-P1-01 activation inputs are approved; their absence is intentional, not a complete
-Phase 1 deployment.
+The implemented foundation uses .NET/C# and the following layout. The Copilot SDK
+adapter is implemented, with local metadata-only discovery verified. Its paid
+activation and the secret-bearing reporting workflow remain deferred until P1-01
+inputs are approved; this is not a complete Phase 1 deployment.
 
 ```text
 .github/
@@ -491,13 +510,14 @@ pilot/acceptance criteria. Remaining work must proceed in this order:
 |---|---|---|---|
 | 1 | Confirm GitHub model entitlement, identifiers, endpoint, auth, permissions, and terms; approve numeric limits and retention | Recorded decisions, protected-environment configuration, no secrets in git | Repository owner / team |
 | 2 | Supply Semgrep/Roslyn policies and approve context/scoring choices | Pinned rule/analyzer inputs and approved reporting policy | Team |
-| 3 | Provision a shared persistent executor/store for the tested ledger, implement trusted event/artifact join and a supported provider adapter, and persist auditable history | Local fake-provider/SQLite tests pass; deployment must prove shared reservations, authenticated admission, and bounded live requests | Implementation |
+| 3 | Provision a shared persistent executor/store for the tested ledger, implement trusted event/artifact join, wire the tested Copilot adapter, and persist auditable history | Local fake-provider/SQLite/SDK tests pass; deployment must prove shared reservations, authenticated admission, and bounded live requests | Implementation |
 | 4 | Wire trusted publication and failure artifacts with per-PR serialization | Same-repository and external-fork Actions runs; no untrusted code execution or secret exposure | Implementation / repository owner |
 | 5 | Verify the actual Windows/Ubuntu matrix, calibrate findings, collect telemetry/dispositions, and complete the pilot | Pilot PR/run links, approved baseline/data policy, team sign-off on every Definition of Done item | Entire team |
 
-No remote push, PR publication, repository environment change, or model request has
-been performed. Local GitHub access was used only to read baseline metadata and
-download validation tooling. Do not close Phase 1 merely because local tests pass.
+No remote push, PR publication, repository environment change, or inference request
+has been performed. Local GitHub access read baseline and model-catalog metadata and
+downloaded validation tooling/runtime packages. Do not close Phase 1 merely because
+local tests pass.
 
 ## 8. Dependency Order and Milestones
 
@@ -517,6 +537,7 @@ Work on schemas and baseline definitions can proceed in parallel after M1. Secre
 
 | Date | Update | Evidence / next step |
 |---|---|---|
+| October 18, 2026 (UTC) | Implemented the approved .NET Copilot SDK adapter and metadata-only discovery; configured three locally discovered, policy-enabled model candidates without enabling paid execution. | `dotnet test adversarial-review/tests/AdversarialReview.Tests/AdversarialReview.Tests.csproj -c Debug`: 114 passed. `dotnet build adversarial-review/src/AdversarialReview.Cli/AdversarialReview.Cli.csproj -c Debug`: 0 warnings/errors. `list-models` succeeded locally (23 entries); no inference performed. Tests cover tool denial, isolation policy, incomplete billing, aggregation, malformed output, cancellation, overruns, and adapter-to-engine/SQLite replay protection. Approved limits, verified billing conversion/provider caps, trusted deployment, and pilot remain required. |
 | October 16, 2026 | Implemented transactional SQLite authorization/spend storage and integrated per-round lease validation with the bounded engine. | Combined suite: 103 passed; CLI build: 0 warnings/errors. Includes concurrent admission, replay, unknown billing, month rollover, and fake-provider cycle with persistent replay rejection across ledger instances. Shared deployment and provider activation remain blocked. |
 | October 16, 2026 | Continued implementation with a bounded review-cycle engine and fake-provider integration cases: claim-before-call, fresh PR state/lease per round, ordered model rotation, usage validation, cancellation settlement, and no blind retries. | Provider and ledger are injected; no paid requests are enabled. Also verified that the requested GitHub Models API has been retired; see D-022. |
 | October 16, 2026 | Documented operator procedures and explicit activation/resume dependencies; retained all unmet pilot/approval criteria as open. | [Tooling runbook](../adversarial-review/README.md). Final offline suite: 73 passed; parser suite: 1,176 passed. No live model workflow is enabled. |
@@ -714,7 +735,8 @@ Add approved answers here; do not rely only on chat history.
 | D-019 | October 16, 2026 | Semgrep rules and Roslyn analyzer policy will be supplied manually by the team. | Entire team | Design integration points now; do not invent the final rule policy. |
 | D-020 | October 16, 2026 | Implement offline contracts using Draft 2020-12, explicit version `1.0`, closed schemas, and local URN resolution. | Implementation choice | Unknown/additive fields and future versions are rejected until explicitly supported; no network schema retrieval. |
 | D-021 | October 16, 2026 | Leave numeric risk unavailable rather than invent unapproved weights; keep byte limits distinct from provider token accounting. | Implementation safety choice | Team approval and model-specific accounting remain required before calibrated or paid operation. |
-| D-022 | October 16, 2026 | Availability check found GitHub Models retired; D-015 remains the requested starting preference but is not an available API integration. | Verified external constraint | [Official documentation](https://docs.github.com/en/github-models) reports retirement July 30, 2026. A supported replacement and entitlement are required; no silent provider switch. |
+| D-022 | October 16, 2026 | Availability check found the GitHub Models API retired; this does not apply to GitHub Copilot SDK. | Verified external constraint | [Official documentation](https://docs.github.com/en/github-models) reports Models retirement July 30, 2026. Copilot is a separate integration, explicitly approved in D-023. |
+| D-023 | October 18, 2026 (UTC) | Owner approved the recommended .NET Copilot SDK integration using configurable model IDs discovered from the account. | allancascante | Local metadata discovery verified; candidate rotation starts with GPT-5.4 mini, Claude Haiku 4.5, and MAI-Code-1.1-Flash. No default billing conversion or paid execution is enabled; deployment entitlement, limits, caps, and provider terms remain unverified. |
 
 ## 13. Risks and Issues
 

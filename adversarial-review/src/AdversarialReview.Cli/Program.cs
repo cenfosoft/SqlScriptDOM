@@ -1,6 +1,7 @@
 using System.Text.Json;
 using AdversarialReview;
 using AdversarialReview.Core.Metrics;
+using AdversarialReview.Copilot;
 
 return await ReviewCommand.RunAsync(args);
 
@@ -27,6 +28,28 @@ internal static class ReviewCommand
             }
             switch (args)
             {
+                case ["list-models"]:
+                    string? copilotToken = Environment.GetEnvironmentVariable("COPILOT_GITHUB_TOKEN");
+                    if (string.IsNullOrWhiteSpace(copilotToken))
+                        throw new ContractException("Set COPILOT_GITHUB_TOKEN to a supported Copilot credential for metadata-only discovery.");
+                    if (copilotToken.StartsWith("ghp_", StringComparison.Ordinal))
+                        throw new ContractException("Classic PATs are unsupported. Use Copilot OAuth or a fine-grained PAT with Copilot Requests permission.");
+                    string privateDirectory = Path.Combine(Path.GetTempPath(), $"scriptdom-copilot-{Guid.NewGuid():N}");
+                    Directory.CreateDirectory(privateDirectory);
+                    if (!OperatingSystem.IsWindows())
+                        File.SetUnixFileMode(privateDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                    try
+                    {
+                        using CancellationTokenSource discoveryTimeout = new(TimeSpan.FromSeconds(60));
+                        await using var runtime = new CopilotRuntime(privateDirectory, privateDirectory, copilotToken);
+                        CopilotCatalog catalog = await runtime.DiscoverAsync(discoveryTimeout.Token);
+                        Console.WriteLine(JsonSerializer.Serialize(catalog, Contracts.JsonOptions));
+                    }
+                    finally
+                    {
+                        Directory.Delete(privateDirectory, recursive: true);
+                    }
+                    return 0;
                 case ["validate-config", string path]:
                     ReviewConfiguration config = ReviewConfiguration.Parse(ReadDocument(path));
                     Console.WriteLine(JsonSerializer.Serialize(new
@@ -53,7 +76,7 @@ internal static class ReviewCommand
                     Console.WriteLine("SHA-bound evidence manifest written. Authenticity still requires trusted GitHub metadata verification.");
                     return 0;
                 default:
-                    Console.Error.WriteLine("Usage: validate-config <path> | validate <schema-name> <path> | render <audit.json> <output.md> | baseline <owner> <repo> <output.json> [months] [max-pages] | manifest <directory> <check> <platform> <conclusion>");
+                    Console.Error.WriteLine("Usage: list-models | validate-config <path> | validate <schema-name> <path> | render <audit.json> <output.md> | baseline <owner> <repo> <output.json> [months] [max-pages] | manifest <directory> <check> <platform> <conclusion>");
                     return 2;
             }
         }
@@ -69,7 +92,7 @@ internal static class ReviewCommand
         }
         catch (Exception exception) when (exception is HttpRequestException or OperationCanceledException or FormatException or OverflowException)
         {
-            Console.Error.WriteLine($"Collection failed ({exception.GetType().Name}); partial data is not represented as a complete baseline.");
+            Console.Error.WriteLine($"Operation failed ({exception.GetType().Name}); no provider payload is logged and partial data is not represented as complete.");
             return 1;
         }
     }

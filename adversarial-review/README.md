@@ -15,15 +15,92 @@ dotnet run --project adversarial-review/src/AdversarialReview.Cli -- validate fi
 dotnet run --project adversarial-review/src/AdversarialReview.Cli -- render audit.json report.md
 ```
 
-The shipped [configuration](config/review.json) is intentionally disabled, has no models,
+The shipped [configuration](config/review.json) is intentionally disabled, lists three
+model candidates discovered through the approved Copilot SDK,
 and leaves unapproved limits unset. Configuration validation can succeed while execution
-blockers remain: structural validity is not authorization to spend. No provider client
-or paid execution command is implemented. In addition, the current
+blockers remain: structural validity is not authorization to spend. A provider adapter
+is implemented, but there is no paid execution command or secret-bearing workflow. The
 [official GitHub Models documentation](https://docs.github.com/en/github-models)
 states that GitHub Models was retired on July 30, 2026. Its former inference API
-is not an available activation target. GitHub Copilot is a separate service and
-must not be treated as interchangeable API entitlement. A supported provider
-selection remains necessary.
+is not an available activation target. GitHub Copilot SDK is a separate, explicitly
+approved integration; local catalog discovery does not prove Actions entitlement.
+
+## GitHub Copilot SDK and metadata-only model discovery
+
+The [Copilot integration](src/AdversarialReview.Copilot/) uses
+`GitHub.Copilot.SDK` **1.0.22** and its pinned native runtime **1.0.98**.
+The package downloads the platform runtime and verifies its release checksum during
+build; no separately installed CLI, Node.js, Python, or PowerShell is required.
+Build needs access to the GitHub release assets (or an approved SDK-supported mirror).
+The existing Windows/Ubuntu tooling matrix must still verify this dependency.
+
+With a supported credential supplied through `COPILOT_GITHUB_TOKEN`, run:
+
+```text
+dotnet run --project adversarial-review/src/AdversarialReview.Cli -- list-models
+```
+
+This prints bounded JSON catalog metadata to stdout, creates **no inference session**,
+sends **no prompt or repository content**, and makes no repository changes.
+It uses a fresh private temporary state/working directory, disables ambient login,
+logging, and remote sessions, and removes that directory after client disposal.
+Discovery has a 60-second timeout and exits nonzero on failures without logging provider
+payloads. Tokens must not be supplied as CLI arguments or saved in repository files.
+Supported credentials include Copilot OAuth and a fine-grained PAT with the **Copilot
+Requests** account permission; classic PATs are rejected. A normal Actions
+`GITHUB_TOKEN` is not assumed to grant Copilot access. See
+[official authentication guidance](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/authenticate-copilot-cli).
+
+Metadata-only discovery on October 18, 2026 (UTC) returned 23 entries for the current
+account, including the following **policy-enabled** candidates:
+
+| Rotation order | Exact model ID | Family |
+|---|---|---|
+| 1 | `gpt-5.4-mini` | OpenAI |
+| 2 | `claude-haiku-4.5` | Anthropic |
+| 3 | `mai-code-1.1-flash` | Microsoft |
+
+These are candidates for testing diversity, not a verified price ranking. The configured
+order is independent of the sorted discovery display. Availability must be refreshed
+on the trusted host; inference entitlement, current prices, and terms must be checked
+before use. `auto` is not eligible for deterministic rotation. Unknown/disabled policy
+states are ineligible; zero/absent limits are unknown, not unlimited. Gemini was not
+returned by this account discovery, so no Gemini model was invented or configured.
+The legacy `github-models` schema value remains readable for compatibility with old
+fixtures; it has no adapter and is never silently mapped to Copilot.
+
+### Report-only adapter and accounting boundary
+
+`CopilotReviewProvider` implements `IReviewProvider`. Each call uses the exact
+discovered, policy-enabled configured model; it disables all tools/MCP/custom agents,
+denies permission requests, replaces the system prompt with trusted host guidance,
+disables repository instruction/config/skill/hook discovery, host git operations,
+embedding retrieval, session stores, telemetry, and infinite-session compaction.
+The working directory must be a host-owned empty directory, never the contributor
+checkout. JSON context remains bounded and credential-checked; evidence validation
+and maintained SHA/state/authorization checks remain the engine/host's responsibility.
+
+The adapter requests prompt/output limits through the SDK capability override and a
+session AI-credit ceiling. These SDK controls are **not verified hard per-request
+financial caps**; admission-time limits can overshoot on an in-flight call and cannot
+prove cancellation stopped billing. Capability overrides and session limits are
+experimental SDK surfaces, isolated behind a pinned version. Paid activation remains
+blocked pending approved limits and verified provider-side enforcement.
+
+There is deliberately **no default currency conversion**: the trusted host must supply
+an explicit verified `CopilotBillingConversion`. Complete `assistant.usage` records
+are aggregated across calls, must identify the requested model, and are rounded up to
+integer microUSD for the ledger. The SDK `Cost`/model multiplier is **not dollars**.
+Missing/partial billing, model substitution, truncation, filtering, invalid usage, and
+overruns fail closed without retry and leave billing unconfirmed. Malformed findings
+retain known usage so the engine can record a malformed outcome. Cancellation is
+forwarded and the runtime attempts a bounded abort; reservations must remain held.
+Session disposal and deletion are attempted after each call. Cleanup failures are
+explicit errors, not successful reviews; the trusted host must inspect/protect any
+remaining private state and enforce its approved retention policy.
+The [SDK usage guide](https://github.com/github/copilot-sdk/blob/v1.0.22/docs/features/usage-and-billing.md)
+warns that nano-unit conversion must be checked against current billing documentation.
+No currency conversion or model inference has been validated against live billing.
 
 ## Contracts and compatibility
 
@@ -160,8 +237,9 @@ Evidence membership does not prove the finding is true; reviewer validation and
 later human dispositions remain necessary.
 
 These components are offline building blocks. The bounded engine and SQLite ledger
-can be exercised with fake providers, but no live provider adapter, deployed ledger,
-or trusted reporting workflow is enabled.
+can be exercised with fake providers. The SDK adapter is implemented and metadata
+discovery is verified locally; no paid execution, deployed ledger, or trusted reporting
+workflow is enabled.
 
 ## PR comment client (not wired to a live workflow)
 
@@ -217,8 +295,8 @@ protection are implemented and approved.
    and verify successful evidence for both authoritative OS matrices.
 6. Approve artifact/metrics retention and raw-data access, model-context selection,
    and reporting redaction. Keep raw prompts and credentials out of artifacts.
-7. Implement the trusted event join, artifact download/extraction checks, provider
-   adapter, bounded model loop, concurrency locks, durable audit history, and failure
+7. Implement the trusted event join, artifact download/extraction checks, integration
+   of the tested provider adapter/loop, concurrency locks, durable audit history, and failure
    artifact publication. Require fresh head/state checks after approval and before
    every round. The current comment client is not a spending authorization service.
 8. Run fork and same-repository pilot scenarios using approved limits and obtain
@@ -271,7 +349,7 @@ Prior model history is explicit input tied to the evaluated SHA. The trusted hos
 must authenticate its origin and persist each outcome before acknowledging a run.
 Synthetic tests exercise complete rotation, resumed rotation, stale heads, denied
 claims, replay, budget exhaustion, malformed output, timeouts, and usage violations.
-No live provider is implemented or invoked by these tests.
+The Copilot adapter is tested with an injected runtime; these tests invoke no live model.
 
 ## Persistent authorization and spend ledger
 

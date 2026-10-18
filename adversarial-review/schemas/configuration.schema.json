@@ -29,7 +29,7 @@
         "type": "object", "additionalProperties": false,
         "required": ["provider", "model", "enabled"],
         "properties": {
-          "provider": { "enum": ["github-models"] },
+          "provider": { "enum": ["github-models", "github-copilot"] },
           "model": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9/_.:-]{0,199}$" },
           "enabled": { "type": "boolean" }
         }
