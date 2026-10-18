@@ -123,6 +123,15 @@ The selection policy must:
 
 Providers may retain requests. The initial adapter targets model access supplied through GitHub, while keeping the provider interface extensible. Exact GitHub model identifiers, endpoint, Actions permission, authentication mechanism, and retention disclosures still need to be confirmed in the fork.
 
+**Provider availability update (October 16, 2026):** The current
+[GitHub Models documentation](https://docs.github.com/en/github-models) states
+that GitHub Models was fully retired on July 30, 2026, including its catalog,
+inference API, and BYOK. GitHub Copilot is a separate service. The approved
+"GitHub-provided models" starting point therefore cannot be implemented as a
+GitHub Models API adapter. Keep execution disabled; choose a supported provider
+and verify CI/API entitlement before activation. Do not substitute a personal
+Copilot/chat subscription or silently route requests to a different provider.
+
 ### 5.5 Authorized Paid-Review Gate
 
 An arbitrary contributor must not be able to trigger paid inference. The initial gate will use a repository-configured opt-in label, subject to these requirements:
@@ -507,6 +516,7 @@ Work on schemas and baseline definitions can proceed in parallel after M1. Secre
 
 | Date | Update | Evidence / next step |
 |---|---|---|
+| October 16, 2026 | Continued implementation with a bounded review-cycle engine and fake-provider integration cases: claim-before-call, fresh PR state/lease per round, ordered model rotation, usage validation, cancellation settlement, and no blind retries. | Provider and ledger are injected; no paid requests are enabled. Also verified that the requested GitHub Models API has been retired; see D-022. |
 | October 16, 2026 | Documented operator procedures and explicit activation/resume dependencies; retained all unmet pilot/approval criteria as open. | [Tooling runbook](../adversarial-review/README.md). Final offline suite: 73 passed; parser suite: 1,176 passed. No live model workflow is enabled. |
 | October 16, 2026 | Implemented an idempotent GitHub audit-comment client with bot-only targets, run ordering, pre/post SHA checks, and explicit duplicate/permission failures. | Combined suite: 73 passed (9 publisher cases). Synthetic HTTP tests only; no remote comment was created. Trusted workflow concurrency, artifact failure handling, and live pilot remain pending. |
 | October 16, 2026 | Added bounded context building and strict reviewer-response validation without provider access. | Combined suite: 64 passed; CLI build: 0 warnings/errors. Tests cover exact UTF-8 budget boundaries, JSON-escaped secrets, wrong SHA/source/disposition, invented evidence, and malformed responses. No live adversarial loop is claimed. |
@@ -702,6 +712,7 @@ Add approved answers here; do not rely only on chat history.
 | D-019 | October 16, 2026 | Semgrep rules and Roslyn analyzer policy will be supplied manually by the team. | Entire team | Design integration points now; do not invent the final rule policy. |
 | D-020 | October 16, 2026 | Implement offline contracts using Draft 2020-12, explicit version `1.0`, closed schemas, and local URN resolution. | Implementation choice | Unknown/additive fields and future versions are rejected until explicitly supported; no network schema retrieval. |
 | D-021 | October 16, 2026 | Leave numeric risk unavailable rather than invent unapproved weights; keep byte limits distinct from provider token accounting. | Implementation safety choice | Team approval and model-specific accounting remain required before calibrated or paid operation. |
+| D-022 | October 16, 2026 | Availability check found GitHub Models retired; D-015 remains the requested starting preference but is not an available API integration. | Verified external constraint | [Official documentation](https://docs.github.com/en/github-models) reports retirement July 30, 2026. A supported replacement and entitlement are required; no silent provider switch. |
 
 ## 13. Risks and Issues
 

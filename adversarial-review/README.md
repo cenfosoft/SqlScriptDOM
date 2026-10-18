@@ -18,7 +18,12 @@ dotnet run --project adversarial-review/src/AdversarialReview.Cli -- render audi
 The shipped [configuration](config/review.json) is intentionally disabled, has no models,
 and leaves unapproved limits unset. Configuration validation can succeed while execution
 blockers remain: structural validity is not authorization to spend. No provider client
-or paid execution command is implemented.
+or paid execution command is implemented. In addition, the current
+[official GitHub Models documentation](https://docs.github.com/en/github-models)
+states that GitHub Models was retired on July 30, 2026. Its former inference API
+is not an available activation target. GitHub Copilot is a separate service and
+must not be treated as interchangeable API entitlement. A supported provider
+selection remains necessary.
 
 ## Contracts and compatibility
 
@@ -242,3 +247,26 @@ to disable advisory review. Preserve sanitized incident evidence under the appro
 retention policy; delete exposed secrets from comments/artifacts using repository
 administration tools. No repository environment or remote configuration has been
 created by this implementation.
+
+## Bounded review-cycle engine
+
+`ReviewCycle.RunAsync` joins validated configuration, the run/context identities,
+authorization preflight, required checks, a provider, and a spend ledger. It claims
+the whole cycle before model execution, checks the current PR state and reservation
+lease before every round, rotates eligible configured models, and bounds request
+timeouts by both configuration and reservation expiry. The provider must honor
+cancellation and enforce input-token and maximum-cost limits before sending a
+request; validating reported usage afterward is only detection, not a billing cap.
+
+The engine rejects malformed output, invalid usage, conflicting finding identifiers,
+and unexpected history. Failed/uncertain requests stop the cycle without retries,
+even when a larger retry allowance is configured: an allowance is a ceiling, not a
+requirement to retry. Known usage is recorded; unknown usage stays unknown and
+retains the full reservation. Settlement is attempted with a separate bounded token
+after request cancellation. Storage errors propagate instead of losing accounting.
+
+Prior model history is explicit input tied to the evaluated SHA. The trusted host
+must authenticate its origin and persist each outcome before acknowledging a run.
+Synthetic tests exercise complete rotation, resumed rotation, stale heads, denied
+claims, replay, budget exhaustion, malformed output, timeouts, and usage violations.
+No live provider is implemented or invoked by these tests.
