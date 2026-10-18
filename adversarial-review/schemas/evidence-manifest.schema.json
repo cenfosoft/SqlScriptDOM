@@ -18,7 +18,7 @@
       }
     },
     "check": { "enum": ["build", "test", "semgrep", "roslyn", "foundation"] },
-    "platform": { "enum": ["windows", "ubuntu"] },
+    "platform": { "enum": ["windows", "ubuntu", "independent"] },
     "conclusion": { "enum": ["passed", "failed", "cancelled", "missing"] },
     "files": {
       "type": "array", "minItems": 1, "maxItems": 1000,

@@ -135,6 +135,25 @@ does not establish which head was authorized. It does not consume authorization,
 grant environment approval, or establish artifact-content trust. `GitHubReviewApi`
 requires a finite-timeout client with automatic redirects disabled.
 
+`GitHubReviewEvidence` lists the admitted run's artifacts and exact attempt's jobs.
+Required artifacts are named `<check>-<os>-<headSha>-<attempt>`, where OS is
+`windows-latest`, `ubuntu-latest`, or `independent`. Jobs must be successful
+`build (<os>)`/`test (<os>)` or independent `semgrep`/`roslyn`; required steps are
+`Build`, `Run tests Windows`, `Run tests Linux`, `Run Semgrep`, and `Run Roslyn`.
+Analyzer jobs/artifacts do not exist until the team supplies policy; missing evidence
+remains a blocker, never a synthetic pass.
+
+Downloads are bounded at 55 MiB compressed; manifest/raw limits additionally apply.
+ZIPs are inspected in memory, not extracted or executed. Absolute/traversal/device
+paths, case-colliding entries, links, unsupported file types, excess nesting/expansion,
+unlisted files, and checksum/identity mismatches are rejected. Signed downloads allow
+only HTTPS Azure Blob or Actions storage origins and receive no GitHub credential;
+both HTTP clients must disable automatic redirects and have finite timeouts.
+Admission also compares the PR workflow blob to the trusted configuration revision.
+A PR changing the authoritative workflow requires human handling, rather than trusting
+its own revised checks. Checksums establish integrity, not correctness of contributor
+code. Live GitHub artifact/job shapes and fork SHA lookup still require pilot evidence.
+
 `ReviewGate` is a pure, offline preflight, **not** an authorization service. Its inputs
 must eventually come from authenticated GitHub metadata, verified artifacts, and a
 protected environment. A successful result means eligible for an atomic authorization

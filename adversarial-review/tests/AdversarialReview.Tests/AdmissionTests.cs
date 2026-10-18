@@ -33,6 +33,10 @@ public sealed class AdmissionTests
 
     internal static Dictionary<string, JsonNode> Fixtures() => new()
     {
+        [$"/repos/owner/repo/contents/.github/workflows/pr-validation.yml?ref={FoundationTests.Sha}"] =
+            JsonNode.Parse($$"""{"sha":"{{FoundationTests.OtherSha}}","type":"file"}""")!,
+        [$"/repos/owner/repo/contents/.github/workflows/pr-validation.yml?ref={FoundationTests.OtherSha}"] =
+            JsonNode.Parse($$"""{"sha":"{{FoundationTests.OtherSha}}","type":"file"}""")!,
         ["/repos/owner/repo/actions/workflows/pr-validation.yml"] = JsonNode.Parse("""
             {"id":10,"state":"active","path":".github/workflows/pr-validation.yml"}
             """)!,
@@ -65,7 +69,7 @@ public sealed class AdmissionTests
             Assert.AreEqual(FoundationTests.Sha, result.HeadSha);
             Assert.AreEqual("github-label-1-50", TrustedAdmission.AuthorizationId(result));
             Assert.AreEqual(headRepository, result.HeadRepositoryId);
-            Assert.AreEqual(4, handler.Requests.Count);
+            Assert.AreEqual(6, handler.Requests.Count);
         }
     }
 
@@ -86,6 +90,7 @@ public sealed class AdmissionTests
     [DataRow("run-repo")]
     [DataRow("run-head-repo")]
     [DataRow("run-pr")]
+    [DataRow("workflow-content")]
     public async Task UntrustedStaleOrUnsuccessfulMetadataIsRejected(string mutation)
     {
         using var handler = new Handler();
@@ -110,6 +115,9 @@ public sealed class AdmissionTests
             case "run-repo": run["repository"]!["id"] = 99; break;
             case "run-head-repo": run["head_repository"]!["id"] = 99; break;
             case "run-pr": run["pull_requests"] = new JsonArray(); break;
+            case "workflow-content":
+                handler.Responses[$"/repos/owner/repo/contents/.github/workflows/pr-validation.yml?ref={FoundationTests.Sha}"]["sha"] = FoundationTests.Sha;
+                break;
         }
         using HttpClient http = new(handler);
         await Assert.ThrowsExceptionAsync<ContractException>(() =>

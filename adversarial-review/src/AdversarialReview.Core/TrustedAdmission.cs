@@ -74,6 +74,14 @@ public sealed class TrustedAdmission(GitHubReviewApi api)
                 p.GetProperty("number").GetInt32() == request.PullRequest
                 && p.GetProperty("head").GetProperty("sha").GetString() == request.HeadSha))
             throw new ContractException("Validation run is not successful authoritative evidence for this exact PR head and attempt.");
+        string workflowFile = $"{api.Route}/contents/.github/workflows/pr-validation.yml";
+        using JsonDocument trustedWorkflow = await api.GetAsync($"{workflowFile}?ref={request.ConfigurationSha}", cancellationToken);
+        using JsonDocument evaluatedWorkflow = await api.GetAsync($"{workflowFile}?ref={request.HeadSha}", cancellationToken);
+        string? trustedBlob = trustedWorkflow.RootElement.GetProperty("sha").GetString();
+        if (!Contracts.IsSha(trustedBlob ?? "") || trustedBlob != evaluatedWorkflow.RootElement.GetProperty("sha").GetString()
+            || trustedWorkflow.RootElement.GetProperty("type").GetString() != "file"
+            || evaluatedWorkflow.RootElement.GetProperty("type").GetString() != "file")
+            throw new ContractException("PR validation workflow differs from trusted policy; human handling is required.");
         return new(api.Repository, repositoryId, request.PullRequest, request.HeadSha, baseSha,
             request.ConfigurationSha, request.Actor, configuration.AuthorizationLabel, request.LabelEventId,
             authorizedAt, request.ValidationRunId, request.ValidationAttempt, workflowId, headRepositoryId);
