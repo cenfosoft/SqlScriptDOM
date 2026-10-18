@@ -516,10 +516,11 @@ pilot/acceptance criteria. Remaining work must proceed in this order:
 | 4 | Activate the implemented stored-report publisher with a bot credential and verify artifact retention/failure handling | Same-repository and external-fork Actions runs; no untrusted code execution or secret exposure | Implementation / repository owner |
 | 5 | Verify the actual Windows/Ubuntu matrix, calibrate findings, collect telemetry/dispositions, and complete the pilot | Pilot PR/run links, approved baseline/data policy, team sign-off on every Definition of Done item | Entire team |
 
-No remote push, PR publication, repository environment change, or inference request
-has been performed. Local GitHub access read baseline and model-catalog metadata and
-downloaded validation tooling/runtime packages. Do not close Phase 1 merely because
-local tests pass.
+The implementation branch is pushed and [draft PR #3](https://github.com/cenfosoft/SqlScriptDOM/pull/3)
+is open against this fork for team review. No repository environment change, audit
+comment publication, or inference request has been performed. Local GitHub access
+also read baseline/model-catalog metadata and downloaded validation tooling/runtime
+packages. Do not close Phase 1 merely because local tests pass.
 
 ### Pending Manual Inputs and Deployment Evidence
 
@@ -531,7 +532,7 @@ local tests pass.
 | Configure the `adversarial-review` environment with required approval and allowed branches | Workflow environment naming alone is not a configured protection; preparation has no paid capability regardless. |
 | Supply pinned Semgrep rules and Roslyn policy/jobs/evidence | Missing analyzer records block review; no fake passes are emitted. |
 | Approve context/guidance selection, risk calibration, retention/access, and escalation ownership | These are policy decisions, not safe defaults to invent. |
-| Authorize push/installation and execute real fork/same-repository Windows/Ubuntu pilots | All changes are local; no remote deployment, protected secret, or real inference has been tested. |
+| Review draft PR #3, approve installation, and execute real fork/same-repository Windows/Ubuntu pilots | Branch is published for review; protected-secret deployment and real inference remain untested. Draft status does not establish successful CI pilots. |
 | Review evidence and accept Phase 1 as a team | Local synthetic success does not satisfy the Definition of Done. |
 
 **Remaining deployment-specific code:** bind the chosen executor's authentic
@@ -559,6 +560,7 @@ Work on schemas and baseline definitions can proceed in parallel after M1. Secre
 
 | Date | Update | Evidence / next step |
 |---|---|---|
+| October 18, 2026 (UTC) | Pushed the implementation branch and opened draft PR #3 in the fork for team review, using the repository PR template and documenting incomplete activation/pilot criteria. | [Draft PR](https://github.com/cenfosoft/SqlScriptDOM/pull/3). Refreshed local verification: 172 tooling tests and 1,176 parser tests passed; CLI build zero warnings/errors; actionlint 1.7.7 passed. Standard PR creation encountered upstream-parent SAML metadata access; direct fork REST creation succeeded without accessing upstream resources. No paid inference or environment configuration performed. |
 | October 18, 2026 (UTC) | Added a read-only default-branch `pull_request_target:labeled` preparation workflow, protected-environment reference, and `prepare-review` CLI with sanitized reports/failure artifacts. It cannot invoke inference even when configuration is enabled. | Tooling suite: 172 passed; CLI build: 0 warnings/errors; actionlint 1.7.7 passed for preparation and both existing validation workflows. Added webhook/disabled-path tests, authorization revocation recovery, and archive expansion/count ceiling tests. Manual inputs and deployment-specific remaining work are enumerated above; no remote installation or paid activation performed. |
 | October 18, 2026 (UTC) | Connected admission/evidence/context/engine/ledger through a persistent host with fail-fast per-PR locks, immutable sanitized reports, durable SHA-bound model history, and stored-report publication retries. Added bounded Git blob context retrieval with content-hash and patch-count checks. | Tooling suite: 161 passed, including full synthetic host cycles, cross-authorization rotation, replay, failure persistence, publication without inference, and non-destructive v1-to-v2 ledger migration. Host infrastructure, retention, live billing enforcement, and pilot remain manual prerequisites; no paid workflow enabled. |
 | October 18, 2026 (UTC) | Implemented bounded GitHub artifact ingestion and in-memory ZIP validation, manifest identity/checksums, exact successful jobs/steps, and normalized check records. Added validation-workflow blob comparison against the trusted policy revision. | Tooling suite: 154 passed. Malicious paths/links, corrupt archives, skipped jobs/steps, wrong provenance, unsafe redirects, and credential forwarding are tested. Semgrep/Roslyn remain missing until supplied; archives are never executed/extracted. Live artifact shapes and fork content lookup still require pilot verification. |
