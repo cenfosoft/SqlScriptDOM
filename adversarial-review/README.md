@@ -126,6 +126,15 @@ supplied by the host; it must not probe a provider by spending tokens.
 
 ## Execution boundary
 
+`TrustedAdmission` verifies live GitHub PR state, base/head repository identities,
+the latest matching issue-label event and human actor, and the successful
+`pr-validation.yml` run and exact attempt for the PR head. It supports same-repository
+and fork identities and fails on partial pagination. Its request head and actor must
+come from a trusted `pull_request_target:labeled` snapshot; issue label history alone
+does not establish which head was authorized. It does not consume authorization,
+grant environment approval, or establish artifact-content trust. `GitHubReviewApi`
+requires a finite-timeout client with automatic redirects disabled.
+
 `ReviewGate` is a pure, offline preflight, **not** an authorization service. Its inputs
 must eventually come from authenticated GitHub metadata, verified artifacts, and a
 protected environment. A successful result means eligible for an atomic authorization
