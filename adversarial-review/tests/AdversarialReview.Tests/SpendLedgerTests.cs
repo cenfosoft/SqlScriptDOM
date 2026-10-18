@@ -324,4 +324,27 @@ public sealed class SpendLedgerTests
         byte[] content = await File.ReadAllBytesAsync(path);
         Assert.IsFalse(System.Text.Encoding.UTF8.GetString(content).Contains("sensitive-freeform-sentinel", StringComparison.Ordinal));
     }
+
+    [TestMethod]
+    public async Task VersionOneMigrationPreservesReservationsAndRejectsUnrecoverableLegacyHistory()
+    {
+        CycleClaim claim = Claim();
+        await Ledger.ClaimAsync(claim, Token);
+        await Ledger.RecordAsync(claim, Round(), Token);
+        await ReadAsync("""
+            ALTER TABLE rounds DROP COLUMN provider;
+            ALTER TABLE rounds DROP COLUMN model;
+            ALTER TABLE rounds DROP COLUMN selection_reason;
+            ALTER TABLE rounds DROP COLUMN prompt_version;
+            PRAGMA user_version = 1;
+            """);
+        await Assert.ThrowsExceptionAsync<ContractException>(() =>
+            Ledger.ReadHistoryAsync("owner/repo", 1, FoundationTests.Sha, Token));
+        // Failed history reads roll back migration; a normal ledger operation can migrate without erasing data.
+        await Assert.ThrowsExceptionAsync<ContractException>(() => Ledger.ClaimAsync(claim, Token));
+        Assert.AreEqual(1_000_000L, await ReadAsync("SELECT reserved_micro_usd FROM monthly_budgets;"));
+        Assert.AreEqual(1L, await ReadAsync("SELECT count(*) FROM rounds;"));
+        await Ledger.EnsureActiveAsync(claim, Token);
+        Assert.AreEqual(2L, await ReadAsync("PRAGMA user_version;"));
+    }
 }

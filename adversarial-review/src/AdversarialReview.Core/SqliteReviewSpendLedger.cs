@@ -130,12 +130,15 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
         // Late settlement is allowed after expiry; it never grants admission in the new month.
         await ExecuteAsync(connection, transaction, """
             INSERT INTO rounds(repository, authorization_id, number, fingerprint,
-                input_tokens, output_tokens, latency_ms, cost_micro_usd, outcome)
-            VALUES($repo, $auth, $number, $fingerprint, $input, $output, $latency, $cost, $outcome);
+                input_tokens, output_tokens, latency_ms, cost_micro_usd, outcome,
+                provider, model, selection_reason, prompt_version)
+            VALUES($repo, $auth, $number, $fingerprint, $input, $output, $latency, $cost, $outcome,
+                $provider, $model, $reason, $prompt);
             """, cancellationToken, ("$repo", repository), ("$auth", claim.AuthorizationId),
             ("$number", round.Number), ("$fingerprint", fingerprint), ("$input", round.InputTokens),
             ("$output", round.OutputTokens), ("$latency", round.LatencyMilliseconds),
-            ("$cost", cost), ("$outcome", round.Outcome));
+            ("$cost", cost), ("$outcome", round.Outcome), ("$provider", round.Provider),
+            ("$model", round.Model), ("$reason", "Recovered from durable model history."), ("$prompt", round.PromptVersion));
         await transaction.CommitAsync(cancellationToken);
     }
 
@@ -151,7 +154,18 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
         CancellationToken cancellationToken)
     {
         long version = (long)(await ScalarAsync(connection, transaction, "PRAGMA user_version;", cancellationToken))!;
-        if (version == 1) return;
+        if (version == 2) return;
+        if (version == 1)
+        {
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE rounds ADD COLUMN provider TEXT;
+                ALTER TABLE rounds ADD COLUMN model TEXT;
+                ALTER TABLE rounds ADD COLUMN selection_reason TEXT;
+                ALTER TABLE rounds ADD COLUMN prompt_version TEXT;
+                PRAGMA user_version = 2;
+                """, cancellationToken);
+            return;
+        }
         if (version != 0 || (long)(await ScalarAsync(connection, transaction,
             "SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%';", cancellationToken))! != 0)
             throw new ContractException("Unsupported or unversioned spend ledger schema; no reset was performed.");
@@ -179,11 +193,45 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
                 latency_ms INTEGER NOT NULL CHECK(latency_ms >= 0),
                 cost_micro_usd INTEGER CHECK(cost_micro_usd >= 0),
                 outcome TEXT NOT NULL CHECK(outcome IN ('completed', 'malformed', 'failed', 'cancelled')),
+                provider TEXT NOT NULL, model TEXT NOT NULL, selection_reason TEXT NOT NULL, prompt_version TEXT NOT NULL,
                 PRIMARY KEY(repository, authorization_id, number),
                 FOREIGN KEY(repository, authorization_id) REFERENCES claims(repository, authorization_id)
             ) STRICT;
-            PRAGMA user_version = 1;
+            PRAGMA user_version = 2;
             """, cancellationToken);
+    }
+
+    public async Task<ReviewRound[]> ReadHistoryAsync(string repository, int pullRequest, string headSha,
+        CancellationToken cancellationToken, string? authorizationId = null)
+    {
+        // Reuse claim identity validation without making or releasing any reservation.
+        ValidateClaim(new(repository, pullRequest, headSha, "history-read", 1, 1, 1));
+        using SqliteConnection connection = new(connectionString);
+        await OpenAsync(connection, cancellationToken);
+        using SqliteTransaction transaction = connection.BeginTransaction(deferred: false);
+        await InitializeAsync(connection, transaction, cancellationToken);
+        using SqliteCommand command = Command(connection, transaction, """
+            SELECT r.provider, r.model, r.selection_reason, r.prompt_version,
+                r.input_tokens, r.output_tokens, r.latency_ms, r.cost_micro_usd, r.outcome
+            FROM rounds r JOIN claims c ON c.repository = r.repository AND c.authorization_id = r.authorization_id
+            WHERE c.repository = $repo AND c.pull_request = $pr AND c.head_sha = $sha
+                AND ($auth IS NULL OR c.authorization_id = $auth)
+            ORDER BY c.rowid, r.number LIMIT 101;
+            """, ("$repo", repository.ToLowerInvariant()), ("$pr", pullRequest), ("$sha", headSha), ("$auth", authorizationId));
+        List<ReviewRound> rounds = [];
+        using (SqliteDataReader reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                if (rounds.Count == 100 || Enumerable.Range(0, 4).Any(reader.IsDBNull))
+                    throw new ContractException("Durable model history exceeds its ceiling or requires legacy metadata reconciliation.");
+                rounds.Add(new(rounds.Count + 1, reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+                    reader.IsDBNull(4) ? null : reader.GetInt32(4), reader.IsDBNull(5) ? null : reader.GetInt32(5),
+                    reader.GetInt64(6), reader.IsDBNull(7) ? null : reader.GetInt64(7) / Scale, reader.GetString(8)));
+            }
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return rounds.ToArray();
     }
 
     private static async Task<long> VerifyClaimAsync(SqliteConnection connection, SqliteTransaction transaction,

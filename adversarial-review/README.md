@@ -381,6 +381,34 @@ The Copilot adapter is tested with an injected runtime; these tests invoke no li
 
 ## Persistent authorization and spend ledger
 
+`TrustedReviewHost` now joins admission, verified evidence, context, the real ledger,
+and an injected provider. It holds a private per-PR file lock across execution and
+uses immutable, atomically written audit JSON. Blocked runs produce incomplete reports
+without fetching source or creating model calls. Admission is rechecked after ingestion
+and while the PR remains current before each round. The caller still supplies trusted
+environment approval, reporting-run identity, provider policy, and deployment storage.
+`PublishStoredAsync` reads a persisted report under the same lock; publication retries
+never re-enter inference. Recoverable cycle errors preserve a sanitized incomplete report
+and available ledger accounting, not a fabricated clean result. Failure to persist is
+an explicit error.
+
+`GitHubReviewContext` retrieves bounded textual patches and current Git blobs through
+the API, verifies blob hashes and patch addition/deletion counts, and rechecks PR state.
+Binary/missing patches, unavailable blobs, invalid UTF-8, and oversized contexts fail
+rather than silently reviewing a subset. It does not execute or check out PR content.
+The trusted host must select the instruction policy; all API source text is untrusted.
+
+The ledger schema is now version 2 and includes provider/model/prompt-version metadata
+for SHA-bound rotation across authorizations. Arbitrary selection explanations are not
+persisted; recovered history uses a fixed explanation. Version-1 migration preserves all
+claims, usage, and reservations. Legacy rounds lack model metadata, so history reads
+require explicit reconciliation instead of inventing models or resetting spending.
+History reads are bounded at 100 rounds and never release reservations. Audits contain
+findings and therefore need an approved private-storage/retention policy. Per-PR file
+locks require one shared persistent executor/filesystem; they are not distributed locks
+for independent hosted runners. Root storage and all ancestors must be host-owned,
+private, and outside contributor control.
+
 `SqliteReviewSpendLedger` implements atomic admission using an immediate SQLite
 transaction. The host must supply **one trusted persistent database shared by every
 worker for a repository**. A fresh database on each GitHub-hosted runner is not
