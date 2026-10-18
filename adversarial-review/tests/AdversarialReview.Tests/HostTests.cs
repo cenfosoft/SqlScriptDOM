@@ -13,16 +13,18 @@ public sealed class HostTests
     {
         public List<string> Models { get; } = [];
         public bool Fail { get; set; }
+        public Action? AfterReview { get; set; }
         public bool IsAvailable(ModelEntry model) => true;
         public Task<ModelResponse> ReviewAsync(ModelRequest request, CancellationToken cancellationToken)
         {
             Models.Add(request.Model.Model);
             if (Fail) throw new HttpRequestException("private provider response");
+            AfterReview?.Invoke();
             return Task.FromResult(new ModelResponse("[]", 10, 5, 1, 0.01m));
         }
     }
 
-    private sealed class Router(AdmissionTests.Handler admission, IngestionTests.EvidenceHandler evidence) : HttpMessageHandler
+    internal sealed class Router(AdmissionTests.Handler admission, IngestionTests.EvidenceHandler evidence) : HttpMessageHandler
     {
         private readonly HttpMessageInvoker admissionHttp = new(admission, disposeHandler: false);
         private readonly HttpMessageInvoker evidenceHttp = new(evidence, disposeHandler: false);
@@ -117,6 +119,28 @@ public sealed class HostTests
         Assert.IsNull(report.Rounds.Single().EstimatedCostUsd);
         Assert.IsFalse(Contracts.Write(report, "audit-report").Contains("private provider response", StringComparison.Ordinal));
         Assert.AreEqual("failed", (await ledger.ReadHistoryAsync("owner/repo", 1, FoundationTests.Sha, CancellationToken.None)).Single().Outcome);
+    }
+
+    [TestMethod]
+    public async Task RevokedAuthorizationBetweenRoundsStopsAndPersistsRecoveryAccounting()
+    {
+        using var admission = new AdmissionTests.Handler();
+        using var evidence = new IngestionTests.EvidenceHandler();
+        using HttpClient http = new(new Router(admission, evidence));
+        var provider = new Provider
+        {
+            AfterReview = () => admission.Responses["/repos/owner/repo/issues/1/events?per_page=100&page=1"][0]!["event"] = "unlabeled"
+        };
+        var store = new ReviewHostStorage(root);
+        var host = new TrustedReviewHost(new(AdmissionTests.Api(http)), new(AdmissionTests.Api(http), http),
+            new(Path.Combine(root, "spend.db")), provider, store);
+        AuditReport report = await host.RunAsync(FoundationTests.Config(), AdmissionTests.Request(), 100, 1, true, Context,
+            _ => Task.FromResult(new PullRequestState(FoundationTests.Sha, true, false)), [], CancellationToken.None);
+        Assert.AreEqual("incomplete", report.Status);
+        Assert.AreEqual(1, provider.Models.Count);
+        Assert.AreEqual(0.01m, report.Rounds.Single().EstimatedCostUsd);
+        StringAssert.Contains(report.Limitations.Single(), "Recovery");
+        Assert.AreEqual(report.Run, (await store.ReadAsync(report.Run, CancellationToken.None)).Run);
     }
 
     [TestMethod]

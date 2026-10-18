@@ -269,9 +269,9 @@ can be exercised with fake providers. The SDK adapter is implemented and metadat
 discovery is verified locally; no paid execution, deployed ledger, or trusted reporting
 workflow is enabled.
 
-## PR comment client (not wired to a live workflow)
+## PR comment client (persistent-host integration; not deployed)
 
-`GitHubAuditPublisher` is tested against synthetic HTTP handlers only. It supports
+`GitHubAuditPublisher` and its persistent-host integration are tested against synthetic HTTP handlers only. It supports
 one `github-actions[bot]` comment with a stable marker and head/run/attempt metadata,
 creates or updates idempotently, refuses ambiguous duplicates or newer stored runs,
 and rejects draft, closed, or mismatched-head PRs. It rechecks before publication
@@ -295,12 +295,12 @@ protection are implemented and approved.
 
 ### Current operating mode
 
-- Only deterministic validation is wired into Actions. The foundation workflow has
-  read-only repository permissions and does not receive a model credential.
+- Deterministic validation and a trusted **preparation-only** workflow are defined.
+  Both have read-only repository permissions and receive no model credential.
 - No event, label, comment, workflow rerun, or configuration edit can invoke a model
   through the current CLI: it has no model-execution command.
-- Applying `adversarial-review:run` currently does **not** start paid review. Do not
-  interpret the presence of the label as a completed authorization implementation.
+- Applying `adversarial-review:run` by `allancascante` prepares evidence only after
+  the workflow is installed on the default branch; it does **not** start paid review.
 - Existing CI remains authoritative. Offline tool tests, rendered reports, and
   synthetic successful checks are not evidence that a real PR passed validation.
 
@@ -323,15 +323,55 @@ protection are implemented and approved.
    and verify successful evidence for both authoritative OS matrices.
 6. Approve artifact/metrics retention and raw-data access, model-context selection,
    and reporting redaction. Keep raw prompts and credentials out of artifacts.
-7. Implement the trusted event join, artifact download/extraction checks, integration
-   of the tested provider adapter/loop, concurrency locks, durable audit history, and failure
-   artifact publication. Require fresh head/state checks after approval and before
-   every round. The current comment client is not a spending authorization service.
+7. Deploy the implemented admission/evidence/host components to the chosen persistent
+   executor. Wire its authenticated webhook head snapshot, verified protected-environment
+   approval, Copilot credential/billing policy, and bot publication credential. The
+   preparation workflow intentionally does not perform that handoff. Require fresh
+   head/state checks after approval and before every round.
 8. Run fork and same-repository pilot scenarios using approved limits and obtain
    team acceptance. Calibrate numeric risk before introducing numeric reporting;
    automatic correction/merge remains outside Phase 1.
 
 ### Failures and reruns
+
+The [preparation workflow](../.github/workflows/adversarial-review-prepare.yml) is
+triggered only by the authorized label on PRs targeting the default branch. It checks
+out the base workflow's immutable `github.sha`, never the PR head or merge ref.
+It names the `adversarial-review` environment but receives only a read-only Actions
+token. Environment protection must be configured manually; naming an environment does
+not establish approval. If GitHub creates an unprotected environment, this workflow
+still cannot invoke inference or spend tokens.
+
+Its command is:
+
+```text
+dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- prepare-review adversarial-review/config/review.json <output-directory>
+```
+
+It reads `GITHUB_EVENT_PATH`, `GITHUB_EVENT_NAME`, `GITHUB_REPOSITORY`, `GITHUB_ACTOR`,
+`GITHUB_SHA`, `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT`, and read-only `GH_TOKEN` from the
+trusted Actions runtime. It validates a labeled snapshot against the allowlist and
+default branch, correlates label/update time conservatively, selects the newest
+head-matching validation run, and performs admission/evidence verification.
+No Copilot client, source context, spend database, or comment publisher is created.
+It remains preparation-only even if someone enables the JSON configuration.
+It does not turn label history or its generated artifact into reusable funding authority.
+Apply the label **after CI completes**; if correlation is ambiguous, the head changes,
+or the newest run is incomplete/failed, it fails instead of using an older run.
+Remove/reapply the label to request preparation for a new head; a workflow rerun
+retains the original webhook snapshot and cannot authorize a different head.
+
+Successful preparation writes schema-valid `audit.json` and escaped `report.md`,
+explicitly marked incomplete/stale with no model rounds and no numeric risk score.
+Missing analyzers remain blockers. Expected command failures exit nonzero and write
+a constant-content `failure.json` without source, tokens, exception text, or provider
+payloads, validated by [its versioned schema](schemas/preparation-failure.schema.json).
+Output files are create-new only. The workflow uploads available reports
+with `always()`; build/setup failures are still visible as failed jobs and may produce
+no report. Actual Actions/fork runs and environment approval behavior remain unverified.
+There is no automatically posted comment and no paid execution step in this workflow.
+Disable this preparation workflow separately if metadata preparation itself must stop;
+`enabled: false` controls paid execution, not this read-only diagnostic path.
 
 - A structural validation failure exits nonzero without echoing document contents.
   Fix the input rather than relaxing schema enforcement.

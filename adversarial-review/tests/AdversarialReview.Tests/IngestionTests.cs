@@ -71,6 +71,27 @@ public sealed class IngestionTests
                 new("owner/repo", 1, FoundationTests.Sha, 70, 2), "build", "windows", "artifact"));
     }
 
+    [TestMethod]
+    public void CompressedExpansionAndEntryCountCeilingsAreEnforcedBeforeReadingPayloads()
+    {
+        using MemoryStream oversized = new();
+        using (ZipArchive zip = new(oversized, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            using (Stream raw = zip.CreateEntry("raw.log", CompressionLevel.SmallestSize).Open())
+                raw.Write(new byte[EvidenceManifest.MaximumFileBytes + 1]);
+            using StreamWriter manifest = new(zip.CreateEntry("manifest.json").Open());
+            manifest.Write("{}");
+        }
+        Assert.IsTrue(oversized.Length < EvidenceManifest.MaximumFileBytes);
+        Assert.ThrowsException<ContractException>(() => ReviewEvidenceArchive.Verify(oversized.ToArray(),
+            new("owner/repo", 1, FoundationTests.Sha, 70, 2), "build", "windows", "artifact"));
+        using MemoryStream many = new();
+        using (ZipArchive zip = new(many, ZipArchiveMode.Create, leaveOpen: true))
+            for (int i = 0; i < EvidenceManifest.MaximumFiles + 2; i++) zip.CreateEntry($"entry-{i}");
+        Assert.ThrowsException<ContractException>(() => ReviewEvidenceArchive.Verify(many.ToArray(),
+            new("owner/repo", 1, FoundationTests.Sha, 70, 2), "build", "windows", "artifact"));
+    }
+
     internal sealed class EvidenceHandler : HttpMessageHandler
     {
         public JsonArray Artifacts { get; } = [];

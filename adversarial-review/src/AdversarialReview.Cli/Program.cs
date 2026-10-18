@@ -28,6 +28,35 @@ internal static class ReviewCommand
             }
             switch (args)
             {
+                case ["prepare-review", string configPath, string outputDirectory]:
+                    ReviewConfiguration preparationConfig = ReviewConfiguration.Parse(ReadDocument(configPath));
+                    string Required(string key) => Environment.GetEnvironmentVariable(key)
+                        ?? throw new ContractException($"Required trusted Actions metadata is missing: {key}.");
+                    LabelSnapshot snapshot = LabelSnapshot.Parse(ReadDocument(Required("GITHUB_EVENT_PATH")),
+                        Required("GITHUB_EVENT_NAME"), Required("GITHUB_REPOSITORY"), Required("GITHUB_ACTOR"), preparationConfig);
+                    string configurationSha = Required("GITHUB_SHA");
+                    if (!Contracts.IsSha(configurationSha))
+                        throw new ContractException("Trusted checkout revision is not a valid SHA.");
+                    Directory.CreateDirectory(outputDirectory);
+                    using (var apiHandler = new HttpClientHandler { AllowAutoRedirect = false })
+                    using (var artifactHandler = new HttpClientHandler { AllowAutoRedirect = false })
+                    using (var apiHttp = new HttpClient(apiHandler) { Timeout = TimeSpan.FromSeconds(30) })
+                    using (var artifactHttp = new HttpClient(artifactHandler) { Timeout = TimeSpan.FromSeconds(30) })
+                    using (var preparationTimeout = new CancellationTokenSource(TimeSpan.FromMinutes(10)))
+                    {
+                        string credential = Required("GH_TOKEN");
+                        var api = new GitHubReviewApi(apiHttp, credential, snapshot.Repository);
+                        AuditReport prepared = await new ReviewPreparation(api, new(api, artifactHttp)).PrepareAsync(
+                            preparationConfig, snapshot, configurationSha,
+                            long.Parse(Required("GITHUB_RUN_ID"), System.Globalization.CultureInfo.InvariantCulture),
+                            int.Parse(Required("GITHUB_RUN_ATTEMPT"), System.Globalization.CultureInfo.InvariantCulture), preparationTimeout.Token);
+                        string json = Contracts.Write(prepared, "audit-report");
+                        ReportRenderer.RejectCredentialData(json, [credential]);
+                        await WriteNewFileAsync(Path.Combine(outputDirectory, "audit.json"), json);
+                        await WriteNewFileAsync(Path.Combine(outputDirectory, "report.md"), ReportRenderer.Render(prepared, [credential]));
+                        Console.WriteLine("Preparation report written. No inference, authorization consumption, or PR publication performed.");
+                    }
+                    return 0;
                 case ["list-models"]:
                     string? copilotToken = Environment.GetEnvironmentVariable("COPILOT_GITHUB_TOKEN");
                     if (string.IsNullOrWhiteSpace(copilotToken))
@@ -76,25 +105,47 @@ internal static class ReviewCommand
                     Console.WriteLine("SHA-bound evidence manifest written. Authenticity still requires trusted GitHub metadata verification.");
                     return 0;
                 default:
-                    Console.Error.WriteLine("Usage: list-models | validate-config <path> | validate <schema-name> <path> | render <audit.json> <output.md> | baseline <owner> <repo> <output.json> [months] [max-pages] | manifest <directory> <check> <platform> <conclusion>");
+                    Console.Error.WriteLine("Usage: prepare-review <config.json> <output-directory> | list-models | validate-config <path> | validate <schema-name> <path> | render <audit.json> <output.md> | baseline <owner> <repo> <output.json> [months] [max-pages] | manifest <directory> <check> <platform> <conclusion>");
                     return 2;
             }
         }
         catch (Exception exception) when (exception is ContractException or ArgumentException)
         {
+            await RecordPreparationFailureAsync(args);
             Console.Error.WriteLine($"Validation failed: {exception.Message}");
             return 1;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
         {
+            await RecordPreparationFailureAsync(args);
             Console.Error.WriteLine($"Input/output failed ({exception.GetType().Name}); no document content is logged.");
             return 1;
         }
         catch (Exception exception) when (exception is HttpRequestException or OperationCanceledException or FormatException or OverflowException)
         {
+            await RecordPreparationFailureAsync(args);
             Console.Error.WriteLine($"Operation failed ({exception.GetType().Name}); no provider payload is logged and partial data is not represented as complete.");
             return 1;
         }
+        catch (Exception exception) when (exception is KeyNotFoundException or InvalidOperationException)
+        {
+            await RecordPreparationFailureAsync(args);
+            Console.Error.WriteLine($"Metadata failed ({exception.GetType().Name}); no input or provider payload is logged.");
+            return 1;
+        }
+    }
+
+    private static async Task RecordPreparationFailureAsync(string[] args)
+    {
+        if (args is not ["prepare-review", _, string directory]) return;
+        Directory.CreateDirectory(directory);
+        await WriteNewFileAsync(Path.Combine(directory, "failure.json"), Contracts.Write(new
+        {
+            schemaVersion = "1.0",
+            status = "failed",
+            stage = "preparation",
+            message = "Trusted preparation failed. Consult sanitized job diagnostics; no inference or authorization consumption was performed."
+        }, "preparation-failure"));
     }
 
     private static string ReadDocument(string path)
