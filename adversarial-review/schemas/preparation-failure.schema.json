@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:scriptdom:adversarial-review:preparation-failure:1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "status", "stage", "message"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "status": { "const": "failed" },
+    "stage": { "const": "preparation" },
+    "message": { "const": "Trusted preparation failed. Consult sanitized job diagnostics; no inference or authorization consumption was performed." }
+  }
+}

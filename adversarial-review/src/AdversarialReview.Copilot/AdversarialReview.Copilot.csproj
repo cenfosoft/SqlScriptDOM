@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="GitHub.Copilot.SDK" />
+    <ProjectReference Include="../AdversarialReview.Core/AdversarialReview.Core.csproj" />
+  </ItemGroup>
+</Project>

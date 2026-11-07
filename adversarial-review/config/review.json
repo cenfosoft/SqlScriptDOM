@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "1.0",
+  "enabled": false,
+  "authorizationLabel": "adversarial-review:run",
+  "authorizedActors": ["allancascante"],
+  "environment": "adversarial-review",
+  "rounds": null,
+  "limits": {
+    "maxInputTokens": null,
+    "maxOutputTokens": null,
+    "timeoutSeconds": null,
+    "maxRetries": null,
+    "perAuthorizationUsd": null,
+    "monthlyUsd": null
+  },
+  "models": [
+    { "provider": "github-copilot", "model": "gpt-5.4-mini", "enabled": true },
+    { "provider": "github-copilot", "model": "claude-haiku-4.5", "enabled": true },
+    { "provider": "github-copilot", "model": "mai-code-1.1-flash", "enabled": true }
+  ]
+}

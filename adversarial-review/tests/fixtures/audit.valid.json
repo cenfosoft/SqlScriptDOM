@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0",
+  "mode": "report-only",
+  "calibration": "uncalibrated",
+  "run": {
+    "schemaVersion": "1.0",
+    "repository": "example/repository",
+    "pullRequest": 1,
+    "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "configurationSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "workflowRunId": 1,
+    "runAttempt": 1,
+    "authorizationId": "synthetic-event-1",
+    "authorizedActor": "allancascante"
+  },
+  "checks": [
+    { "schemaVersion": "1.0", "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "name": "build", "platform": "windows", "conclusion": "passed", "artifact": "synthetic/build-windows" },
+    { "schemaVersion": "1.0", "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "name": "build", "platform": "ubuntu", "conclusion": "passed", "artifact": "synthetic/build-ubuntu" },
+    { "schemaVersion": "1.0", "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "name": "test", "platform": "windows", "conclusion": "passed", "artifact": "synthetic/test-windows" },
+    { "schemaVersion": "1.0", "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "name": "test", "platform": "ubuntu", "conclusion": "passed", "artifact": "synthetic/test-ubuntu" },
+    { "schemaVersion": "1.0", "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "name": "semgrep", "platform": "independent", "conclusion": "passed", "artifact": "synthetic/semgrep" },
+    { "schemaVersion": "1.0", "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "name": "roslyn", "platform": "independent", "conclusion": "passed", "artifact": "synthetic/roslyn" }
+  ],
+  "findings": [],
+  "rounds": [
+    {
+      "number": 1,
+      "provider": "github-models",
+      "model": "synthetic-fixture-not-a-model",
+      "selectionReason": "Offline test fixture only.",
+      "promptVersion": "1.0",
+      "inputTokens": 10,
+      "outputTokens": 2,
+      "latencyMilliseconds": 100,
+      "estimatedCostUsd": null,
+      "outcome": "completed"
+    }
+  ],
+  "expectedRounds": 1,
+  "status": "complete",
+  "riskScore": null,
+  "blockers": [],
+  "limitations": ["Synthetic fixture, not evidence of a real PR review."]
+}

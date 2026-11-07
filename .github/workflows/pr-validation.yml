@@ -1,23 +1,40 @@
 name: pr-validation
 
 on:
-  pull_request
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
 
 jobs:
   build:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [windows-latest, ubuntu-latest]
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
     - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
       with:
         global-json-file: global.json
     - name: Install dependencies
       run: dotnet restore
     - name: Build
-      run: dotnet build dirs.proj
+      id: build
+      run: dotnet build dirs.proj -fl "-flp:logfile=${{ runner.temp }}/build-evidence/build.log;verbosity=normal"
+    - name: Describe build evidence
+      if: ${{ always() && steps.build.outcome != 'skipped' }}
+      run: dotnet run --project adversarial-review/src/AdversarialReview.Cli -- manifest "${{ runner.temp }}/build-evidence" build "${{ matrix.os == 'windows-latest' && 'windows' || 'ubuntu' }}" "${{ steps.build.outcome == 'success' && 'passed' || 'failed' }}"
+    - name: Upload build evidence
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: build-${{ matrix.os }}-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/build-evidence/
     - name: Archive antlr log for troubleshooting
       if: ${{ failure() && matrix.os == 'ubuntu-latest' }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -32,6 +49,8 @@ jobs:
     needs: build
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
@@ -42,9 +61,20 @@ jobs:
           .\disableStrongName.ps1
 
       - name: Run tests Windows
+        id: windows-tests
         if: matrix.os == 'windows-latest'
-        run: dotnet test
+        run: dotnet test --logger trx --results-directory "${{ runner.temp }}/test-evidence"
 
       - name: Run tests Linux
+        id: ubuntu-tests
         if: matrix.os == 'ubuntu-latest'
-        run: dotnet test /p:TargetFramework=net8.0
+        run: dotnet test /p:TargetFramework=net8.0 --logger trx --results-directory "${{ runner.temp }}/test-evidence"
+      - name: Describe test evidence
+        if: ${{ always() && (steps.windows-tests.outcome != 'skipped' || steps.ubuntu-tests.outcome != 'skipped') }}
+        run: dotnet run --project adversarial-review/src/AdversarialReview.Cli -- manifest "${{ runner.temp }}/test-evidence" test "${{ matrix.os == 'windows-latest' && 'windows' || 'ubuntu' }}" "${{ (steps.windows-tests.outcome == 'success' || steps.ubuntu-tests.outcome == 'success') && 'passed' || 'failed' }}"
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-${{ matrix.os }}-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/test-evidence/
