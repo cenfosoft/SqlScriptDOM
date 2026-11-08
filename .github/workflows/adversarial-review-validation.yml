@@ -9,12 +9,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: adversarial-review-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   foundation:
     if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
     steps:
@@ -24,15 +29,49 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
-      - name: Test offline review foundation
-        run: dotnet test adversarial-review/tests/AdversarialReview.Tests/AdversarialReview.Tests.csproj -c Debug --logger trx --results-directory "${{ runner.temp }}/review-foundation-results"
+
       - name: Build offline CLI
-        run: dotnet build adversarial-review/src/AdversarialReview.Cli/AdversarialReview.Cli.csproj -c Debug
+        run: dotnet build adversarial-review/src/AdversarialReview.Cli/AdversarialReview.Cli.csproj -c Debug -f net8.0
+
+      - name: Run all adversarial-review unit tests
+        id: tests
+        run: dotnet test adversarial-review/tests/AdversarialReview.Tests/AdversarialReview.Tests.csproj -c Debug -f net8.0 --logger "trx;LogFileName=adversarial-review-${{ matrix.os }}.trx" --results-directory "${{ runner.temp }}/review-results"
+
+      - name: Require all 172 adversarial-review tests to pass
+        if: ${{ always() && steps.tests.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $trxFiles = @(Get-ChildItem -Path "${{ runner.temp }}/review-results" -Filter "*.trx" -File)
+          if ($trxFiles.Count -ne 1) {
+            throw "Expected one TRX report for the unfiltered adversarial-review suite; found $($trxFiles.Count)."
+          }
+
+          [xml]$trx = Get-Content -Path $trxFiles[0].FullName -Raw
+          $counters = $trx.TestRun.ResultSummary.Counters
+          $total = [int]$counters.total
+          $passed = [int]$counters.passed
+          $failed = [int]$counters.failed
+          $notExecuted = [int]$counters.notExecuted
+          Write-Host "Adversarial-review tests: total=$total passed=$passed failed=$failed notExecuted=$notExecuted"
+
+          if ($total -ne 172 -or $passed -ne 172 -or $failed -ne 0 -or $notExecuted -ne 0) {
+            throw "The complete adversarial-review suite must report exactly 172 passed tests, with no failures or skipped tests."
+          }
+
       - name: Validate disabled configuration
         run: dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- validate-config adversarial-review/config/review.json
-      - name: Upload foundation test results
+
+      - name: Record test evidence SHA
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}/review-results" | Out-Null
+          "commit=${{ github.event.pull_request.head.sha || github.sha }}" | Set-Content -Path "${{ runner.temp }}/review-results/commit.txt"
+
+      - name: Upload adversarial-review test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: review-foundation-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/review-foundation-results/
+          name: adversarial-review-tests-${{ matrix.os }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/review-results/
+          if-no-files-found: warn

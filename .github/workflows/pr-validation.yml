@@ -7,46 +7,19 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: pr-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build:
+  build-and-test:
     if: ${{ !github.event.pull_request.draft }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
+      fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
-    steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        persist-credentials: false
-    - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-      with:
-        global-json-file: global.json
-    - name: Install dependencies
-      run: dotnet restore
-    - name: Build
-      id: build
-      run: dotnet build dirs.proj -fl "-flp:logfile=${{ runner.temp }}/build-evidence/build.log;verbosity=normal"
-    - name: Describe build evidence
-      if: ${{ always() && steps.build.outcome != 'skipped' }}
-      run: dotnet run --project adversarial-review/src/AdversarialReview.Cli -- manifest "${{ runner.temp }}/build-evidence" build "${{ matrix.os == 'windows-latest' && 'windows' || 'ubuntu' }}" "${{ steps.build.outcome == 'success' && 'passed' || 'failed' }}"
-    - name: Upload build evidence
-      if: always()
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-      with:
-        name: build-${{ matrix.os }}-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/build-evidence/
-    - name: Archive antlr log for troubleshooting
-      if: ${{ failure() && matrix.os == 'ubuntu-latest' }}
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-      with:
-        name: antlr-log
-        path: SqlScriptDom/NUL
-  test: 
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [windows-latest, ubuntu-latest]
-    needs: build
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -60,21 +33,116 @@ jobs:
         run: |
           .\disableStrongName.ps1
 
-      - name: Run tests Windows
-        id: windows-tests
-        if: matrix.os == 'windows-latest'
-        run: dotnet test --logger trx --results-directory "${{ runner.temp }}/test-evidence"
+      - name: Build ScriptDOM on .NET 8
+        run: dotnet build SqlScriptDom/Microsoft.SqlServer.TransactSql.ScriptDom.csproj -c Debug -f net8.0
 
-      - name: Run tests Linux
-        id: ubuntu-tests
-        if: matrix.os == 'ubuntu-latest'
-        run: dotnet test /p:TargetFramework=net8.0 --logger trx --results-directory "${{ runner.temp }}/test-evidence"
-      - name: Describe test evidence
-        if: ${{ always() && (steps.windows-tests.outcome != 'skipped' || steps.ubuntu-tests.outcome != 'skipped') }}
-        run: dotnet run --project adversarial-review/src/AdversarialReview.Cli -- manifest "${{ runner.temp }}/test-evidence" test "${{ matrix.os == 'windows-latest' && 'windows' || 'ubuntu' }}" "${{ (steps.windows-tests.outcome == 'success' || steps.ubuntu-tests.outcome == 'success') && 'passed' || 'failed' }}"
-      - name: Upload test evidence
+      - name: Build the SqlDom test assembly on .NET 8
+        run: dotnet build Test/SqlDom/UTSqlScriptDom.csproj -c Debug -f net8.0
+
+      - name: Run the complete SqlDom unit-test suite
+        id: tests
+        run: dotnet test Test/SqlDom/UTSqlScriptDom.csproj -c Debug -f net8.0 --no-build --logger "trx;LogFileName=ut-scriptdom-${{ matrix.os }}.trx" --results-directory "${{ runner.temp }}/test-results"
+
+      - name: Require all 1,176 tests to pass
+        if: ${{ always() && steps.tests.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $trxFiles = @(Get-ChildItem -Path "${{ runner.temp }}/test-results" -Filter "*.trx" -File)
+          if ($trxFiles.Count -ne 1) {
+            throw "Expected one TRX report for the unfiltered SqlDom suite; found $($trxFiles.Count)."
+          }
+
+          [xml]$trx = Get-Content -Path $trxFiles[0].FullName -Raw
+          $counters = $trx.TestRun.ResultSummary.Counters
+          $total = [int]$counters.total
+          $passed = [int]$counters.passed
+          $failed = [int]$counters.failed
+          $notExecuted = [int]$counters.notExecuted
+          Write-Host "SqlDom tests: total=$total passed=$passed failed=$failed notExecuted=$notExecuted"
+
+          if ($total -ne 1176 -or $passed -ne 1176 -or $failed -ne 0 -or $notExecuted -ne 0) {
+            throw "The complete SqlDom suite must report exactly 1,176 passed tests, with no failures or skipped tests."
+          }
+
+      - name: Record test evidence SHA
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}/test-results" | Out-Null
+          "commit=${{ github.event.pull_request.head.sha }}" | Set-Content -Path "${{ runner.temp }}/test-results/commit.txt"
+
+      - name: Upload test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: test-${{ matrix.os }}-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/test-evidence/
+          name: ut-scriptdom-${{ matrix.os }}-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/test-results/
+          if-no-files-found: warn
+
+  static-analysis:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Run scoped Roslyn NetAnalyzers
+        id: roslyn
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/static-analysis"
+          if ! dotnet build SqlScriptDom/Microsoft.SqlServer.TransactSql.ScriptDom.csproj \
+            -c Debug -f net8.0 \
+            -p:EnableNETAnalyzers=true \
+            -p:AnalysisLevel=latest \
+            -p:RunAnalyzers=true \
+            --verbosity normal \
+            > "$RUNNER_TEMP/static-analysis/roslyn.log" 2>&1; then
+            cat "$RUNNER_TEMP/static-analysis/roslyn.log"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/static-analysis/roslyn.log"
+          printf 'commit=%s\n' '${{ github.event.pull_request.head.sha }}' > "$RUNNER_TEMP/static-analysis/commit.txt"
+
+      - name: Install pinned Semgrep
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/semgrep-venv"
+          "$RUNNER_TEMP/semgrep-venv/bin/python" -m pip install --disable-pip-version-check semgrep==1.184.0
+
+      - name: Run Semgrep rules
+        id: semgrep
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/static-analysis"
+          "$RUNNER_TEMP/semgrep-venv/bin/semgrep" scan \
+            --config .semgrep.yml \
+            --sarif \
+            --output "$RUNNER_TEMP/static-analysis/semgrep.sarif" \
+            --error
+
+      - name: Publish static-analysis summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Static analysis"
+            echo
+            echo "- Commit: \`${{ github.event.pull_request.head.sha }}\`"
+            echo "- Roslyn NetAnalyzers: ${{ steps.roslyn.outcome }}"
+            echo "- Semgrep: ${{ steps.semgrep.outcome }}"
+            echo "- Detailed Roslyn and Semgrep SARIF reports are attached as the \`static-analysis-${{ github.event.pull_request.head.sha }}\` artifact."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload static-analysis reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: static-analysis-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/static-analysis/
+          if-no-files-found: warn
