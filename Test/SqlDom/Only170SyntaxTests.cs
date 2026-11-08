@@ -4,6 +4,7 @@ using SqlStudio.Tests.AssemblyTools.TestCategory;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace SqlStudio.Tests.UTSqlScriptDom
 {
@@ -125,6 +126,23 @@ namespace SqlStudio.Tests.UTSqlScriptDom
             foreach (ParserTest ti in Only170TestInfos)
             {
                 ParserTest.ParseAndVerify(parser, scriptGen, ti._scriptFilename, ti._result170);
+            }
+        }
+
+        [TestMethod]
+        [Priority(0)]
+        [SqlStudioTestCategory(Category.UnitTest)]
+        public void TestVectorDistance_InvalidDimension_ShouldReturnParseError()
+        {
+            const string script = "SELECT VECTOR_DISTANCE('cosine', v1, v2, 0) FROM Tbl;";
+            TSql170Parser parser = new TSql170Parser(true);
+
+            using (StringReader reader = new StringReader(script))
+            {
+                parser.Parse(reader, out IList<ParseError> errors);
+
+                Assert.IsTrue(errors.Count > 0);
+                Assert.IsTrue(errors.Any(error => error.Message.Contains("Vector dimension")));
             }
         }
 
