@@ -4,7 +4,7 @@
   "authorizationLabel": "adversarial-review:run",
   "authorizedActors": ["allancascante"],
   "environment": "adversarial-review",
-  "rounds": null,
+  "rounds": 3,
   "limits": {
     "maxInputTokens": null,
     "maxOutputTokens": null,

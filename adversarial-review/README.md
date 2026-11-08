@@ -98,6 +98,23 @@ forwarded and the runtime attempts a bounded abort; reservations must remain hel
 Session disposal and deletion are attempted after each call. Cleanup failures are
 explicit errors, not successful reviews; the trusted host must inspect/protect any
 remaining private state and enforce its approved retention policy.
+
+The engine enforces at most three rounds per authorization and treats the configured
+input/output token values as aggregate per-cycle budgets: each SDK call receives only
+the remaining allowance. Each round is cancellation-bounded by the configured timeout
+and reservation expiry. An unresolved critical/high finding stops additional calls and
+renders the report status as **Human Review Required**; an attempted but incomplete
+review also escalates. SQLite records the separate `human-review-required` final
+status. The JSON v1.0 report contract remains unchanged, and the advisory status does
+not apply a GitHub label or change the PR's open/closed state. Numeric risk scoring
+remains disabled; no score threshold is inferred.
+
+Before any inference, SQLite atomically consumes the authorization and reserves the
+cycle's full financial maximum against the repository's monthly balance. The durable
+claim records the authorization ID, actor, label, PR, evaluated head SHA, and final
+status; ordered round outcomes and usage are recorded separately. Duplicate
+authorizations fail closed, and unknown billing does not release reserved funds.
+
 The [SDK usage guide](https://github.com/github/copilot-sdk/blob/v1.0.22/docs/features/usage-and-billing.md)
 warns that nano-unit conversion must be checked against current billing documentation.
 No currency conversion or model inference has been validated against live billing.
@@ -174,7 +191,10 @@ artifact retention remain required before live operation.
 
 `AuditEngine.Create` binds checks and findings to one run, requires the configured
 round count for a complete report, and lists unresolved high/critical findings.
-Missing checks or rounds produce `incomplete`; a changed head produces `stale`.
+Unresolved high/critical findings or an attempted incomplete model review produce
+`incomplete` in the versioned report (rendered as **Human Review Required** and
+recorded separately in SQLite); a preparation report with no model rounds and missing
+checks/rounds remains `incomplete`. A changed head produces `stale`.
 Complete describes the evidence collection, **not** safety or merge clearance.
 Numeric risk stays `null` until the team approves provisional weights; zero is not
 a substitute for missing evidence.

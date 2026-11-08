@@ -16,7 +16,8 @@ public interface IReviewProvider
 
 public sealed record CycleClaim(
     string Repository, int PullRequest, string HeadSha, string AuthorizationId,
-    decimal MaximumCostUsd, decimal MonthlyLimitUsd, int MaximumRounds);
+    decimal MaximumCostUsd, decimal MonthlyLimitUsd, int MaximumRounds,
+    string AuthorizedActor, string AuthorizationLabel);
 
 public interface IReviewSpendLedger
 {
@@ -28,6 +29,9 @@ public interface IReviewSpendLedger
 
     // An unsuccessful/unknown request retains its full reservation for reconciliation.
     Task RecordAsync(CycleClaim claim, ReviewRound round, CancellationToken cancellationToken);
+
+    // Final status is persisted with the authorization and SHA for auditability.
+    Task RecordFinalStatusAsync(CycleClaim claim, string status, CancellationToken cancellationToken);
 }
 
 public sealed record CycleResult(AuditReport Report, string[] Diagnostics);
@@ -67,12 +71,15 @@ public sealed class ReviewCycle(IReviewProvider provider, IReviewSpendLedger led
 
         int rounds = configuration.Rounds!.Value;
         var claim = new CycleClaim(run.Repository, run.PullRequest, run.HeadSha, run.AuthorizationId,
-            configuration.Limits.PerAuthorizationUsd!.Value, configuration.Limits.MonthlyUsd!.Value, rounds);
+            configuration.Limits.PerAuthorizationUsd!.Value, configuration.Limits.MonthlyUsd!.Value, rounds,
+            authorization.Actor, authorization.Label);
         await ledger.ClaimAsync(claim, cancellationToken);
         List<ReviewRound> completed = [];
         List<string> diagnostics = [];
         Dictionary<string, Finding> findings = new(StringComparer.Ordinal);
         decimal spent = 0;
+        long inputTokensUsed = 0;
+        long outputTokensUsed = 0;
 
         for (int index = 0; index < rounds; index++)
         {
@@ -97,9 +104,16 @@ public sealed class ReviewCycle(IReviewProvider provider, IReviewSpendLedger led
                 diagnostics.Add("Per-authorization budget exhausted; no further model calls were made.");
                 break;
             }
+            int remainingInputTokens = checked((int)(configuration.Limits.MaxInputTokens!.Value - inputTokensUsed));
+            int remainingOutputTokens = checked((int)(configuration.Limits.MaxOutputTokens!.Value - outputTokensUsed));
+            if (remainingInputTokens <= 0 || remainingOutputTokens <= 0)
+            {
+                diagnostics.Add("Per-PR token budget exhausted; no further model calls were made.");
+                break;
+            }
             string requestId = $"{run.AuthorizationId}:{index + 1}";
-            ModelRequest request = new(selection.Entry, boundedContext, configuration.Limits.MaxInputTokens!.Value,
-                configuration.Limits.MaxOutputTokens!.Value, requestId, remaining);
+            ModelRequest request = new(selection.Entry, boundedContext, remainingInputTokens,
+                remainingOutputTokens, requestId, remaining);
             ReviewRound result;
             Finding[] accepted = [];
             using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -112,6 +126,8 @@ public sealed class ReviewCycle(IReviewProvider provider, IReviewSpendLedger led
                     || response.InputTokens > request.MaxInputTokens || response.OutputTokens > request.MaxOutputTokens
                     || response.LatencyMilliseconds < 0 || response.CostUsd < 0 || response.CostUsd > remaining)
                     throw new ContractException("Provider usage is invalid or exceeds the reserved limits.");
+                inputTokensUsed = checked(inputTokensUsed + response.InputTokens);
+                outputTokensUsed = checked(outputTokensUsed + response.OutputTokens);
                 result = Round(index, selection, response, "completed");
                 try
                 {
@@ -142,6 +158,11 @@ public sealed class ReviewCycle(IReviewProvider provider, IReviewSpendLedger led
             {
                 findings.TryAdd(finding.Id, finding);
             }
+            if (accepted.Any(RequiresHumanReview))
+            {
+                diagnostics.Add("An unresolved critical/high finding requires human review; no further model calls were made.");
+                break;
+            }
             if (result.Outcome != "completed") break;
         }
         using CancellationTokenSource finalRead = new(TimeSpan.FromSeconds(30));
@@ -150,8 +171,14 @@ public sealed class ReviewCycle(IReviewProvider provider, IReviewSpendLedger led
             findings.Values.ToArray(), completed.ToArray(), rounds);
         if ((!state.IsOpen || state.IsDraft) && report.Status != "stale")
             report = report with { Status = "incomplete", Blockers = [.. report.Blockers, "PR is now closed or draft."] };
+        string finalStatus = AuditEngine.RequiresHumanReview(report) ? "human-review-required" : report.Status;
+        await ledger.RecordFinalStatusAsync(claim, finalStatus, finalRead.Token);
         return new(report with { Limitations = [.. report.Limitations, .. diagnostics] }, diagnostics.ToArray());
     }
+
+    private static bool RequiresHumanReview(Finding finding) =>
+        finding.Severity is "critical" or "high"
+        && finding.Disposition is "unreviewed" or "confirmed";
 
     private static ReviewRound[] Renumber(ReviewRound[] history) =>
         history.Select((round, index) => round with { Number = index + 1 }).ToArray();

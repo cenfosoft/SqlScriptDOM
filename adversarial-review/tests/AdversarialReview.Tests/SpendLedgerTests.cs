@@ -33,8 +33,9 @@ public sealed class SpendLedgerTests
     }
 
     private static CycleClaim Claim(string authorization = "label-event-1", int pr = 1,
-        decimal maximum = 1m, decimal monthly = 2m, string repository = "owner/repo", int rounds = 3) =>
-        new(repository, pr, FoundationTests.Sha, authorization, maximum, monthly, rounds);
+        decimal maximum = 1m, decimal monthly = 2m, string repository = "owner/repo", int rounds = 3,
+        string actor = "allancascante", string label = "adversarial-review:run") =>
+        new(repository, pr, FoundationTests.Sha, authorization, maximum, monthly, rounds, actor, label);
 
     private static ReviewRound Round(int number = 1, decimal? cost = 0.1m, string outcome = "completed") =>
         new(number, "github-models", "first", "First eligible configured model.", "1.0",
@@ -134,7 +135,8 @@ public sealed class SpendLedgerTests
             claim with { Repository = "other/repo" }, claim with { PullRequest = 2 },
             claim with { HeadSha = FoundationTests.OtherSha }, claim with { AuthorizationId = "other" },
             claim with { MaximumCostUsd = 0.5m }, claim with { MonthlyLimitUsd = 3 },
-            claim with { MaximumRounds = 2 }
+            claim with { MaximumRounds = 2 }, claim with { AuthorizedActor = "other-actor" },
+            claim with { AuthorizationLabel = "other-label" }
         })
             await Assert.ThrowsExceptionAsync<ContractException>(() => Ledger.RecordAsync(altered, Round(), Token));
         Assert.AreEqual(0L, await ReadAsync("SELECT count(*) FROM rounds;"));
@@ -232,10 +234,11 @@ public sealed class SpendLedgerTests
             Claim(maximum: 0), Claim(maximum: -1), Claim(monthly: 0), Claim(maximum: 3, monthly: 2),
             Claim(maximum: 0.0000001m), Claim(monthly: 2.0000001m),
             Claim(maximum: decimal.MaxValue, monthly: decimal.MaxValue), Claim(monthly: 9223372036854.775808m),
-            Claim(rounds: 0), Claim(rounds: 101), Claim(pr: 0), Claim(repository: "owner"),
+            Claim(rounds: 0), Claim(rounds: 4), Claim(rounds: 101), Claim(pr: 0), Claim(repository: "owner"),
             Claim(repository: "../repo"), Claim(repository: "owner/repo/extra"), Claim(repository: "o/r\n"),
             Claim(repository: "o/r?"), Claim(authorization: ""), Claim() with { HeadSha = "invalid" },
-            Claim() with { HeadSha = FoundationTests.Sha.ToUpperInvariant() }
+            Claim() with { HeadSha = FoundationTests.Sha.ToUpperInvariant() }, Claim(actor: "not valid"),
+            Claim(label: "")
         })
             await Assert.ThrowsExceptionAsync<ContractException>(() => Ledger.ClaimAsync(invalid, Token));
         Assert.IsFalse(File.Exists(path));
@@ -326,6 +329,25 @@ public sealed class SpendLedgerTests
     }
 
     [TestMethod]
+    public async Task AuthorizationRoundBudgetShaAndFinalStatusArePersisted()
+    {
+        CycleClaim claim = Claim();
+        await Ledger.ClaimAsync(claim, Token);
+        await Ledger.RecordAsync(claim, Round(), Token);
+        await Ledger.RecordFinalStatusAsync(claim, "human-review-required", Token);
+        await Ledger.RecordFinalStatusAsync(claim, "human-review-required", Token);
+
+        Assert.AreEqual("allancascante", await ReadAsync("SELECT authorized_actor FROM claims;"));
+        Assert.AreEqual("adversarial-review:run", await ReadAsync("SELECT authorization_label FROM claims;"));
+        Assert.AreEqual(FoundationTests.Sha, await ReadAsync("SELECT head_sha FROM claims;"));
+        Assert.AreEqual("human-review-required", await ReadAsync("SELECT final_status FROM claims;"));
+        Assert.AreEqual(1_000_000L, await ReadAsync("SELECT reserved_micro_usd FROM monthly_budgets;"));
+        Assert.AreEqual("completed", await ReadAsync("SELECT outcome FROM rounds;"));
+        await Assert.ThrowsExceptionAsync<ContractException>(() =>
+            Ledger.RecordFinalStatusAsync(claim, "complete", Token));
+    }
+
+    [TestMethod]
     public async Task VersionOneMigrationPreservesReservationsAndRejectsUnrecoverableLegacyHistory()
     {
         CycleClaim claim = Claim();
@@ -336,6 +358,9 @@ public sealed class SpendLedgerTests
             ALTER TABLE rounds DROP COLUMN model;
             ALTER TABLE rounds DROP COLUMN selection_reason;
             ALTER TABLE rounds DROP COLUMN prompt_version;
+            ALTER TABLE claims DROP COLUMN final_status;
+            ALTER TABLE claims DROP COLUMN authorization_label;
+            ALTER TABLE claims DROP COLUMN authorized_actor;
             PRAGMA user_version = 1;
             """);
         await Assert.ThrowsExceptionAsync<ContractException>(() =>
@@ -345,6 +370,6 @@ public sealed class SpendLedgerTests
         Assert.AreEqual(1_000_000L, await ReadAsync("SELECT reserved_micro_usd FROM monthly_budgets;"));
         Assert.AreEqual(1L, await ReadAsync("SELECT count(*) FROM rounds;"));
         await Ledger.EnsureActiveAsync(claim, Token);
-        Assert.AreEqual(2L, await ReadAsync("PRAGMA user_version;"));
+        Assert.AreEqual(3L, await ReadAsync("PRAGMA user_version;"));
     }
 }

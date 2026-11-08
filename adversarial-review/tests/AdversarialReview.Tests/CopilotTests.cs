@@ -235,7 +235,7 @@ public sealed class CopilotTests
         Assert.IsFalse(config.Enabled);
         Assert.AreEqual(3, config.Models.Length);
         Assert.IsTrue(config.Models.All(m => m.Provider == CopilotModelCatalog.Provider));
-        Assert.IsNull(config.Rounds);
+        Assert.AreEqual(ReviewConfiguration.MaxRounds, config.Rounds);
         Assert.IsTrue(config.ExecutionBlockers().Length > 0);
     }
 

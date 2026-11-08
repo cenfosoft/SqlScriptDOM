@@ -82,8 +82,11 @@ public static class Contracts
         if (audit.Rounds.Where((round, index) => round.Number != index + 1).Any()
             || audit.Rounds.Length > audit.ExpectedRounds)
             throw new ContractException("Audit rounds must be ordered, contiguous, and within the expected count.");
-        if (audit.Status == "complete" && (audit.Rounds.Length != audit.ExpectedRounds
-            || audit.Rounds.Any(r => r.Outcome != "completed")
+        bool incompleteRounds = audit.Rounds.Length != audit.ExpectedRounds
+            || audit.Rounds.Any(r => r.Outcome != "completed");
+        bool elevatedRisk = audit.Findings.Any(f => f.Severity is "critical" or "high"
+            && f.Disposition is "unreviewed" or "confirmed");
+        if (audit.Status == "complete" && (incompleteRounds || elevatedRisk
             || CheckPolicy.Blockers(audit.Run.HeadSha, audit.Checks).Length != 0))
             throw new ContractException("A complete audit requires all expected rounds and mandatory checks.");
     }
