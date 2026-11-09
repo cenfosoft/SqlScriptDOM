@@ -131,6 +131,10 @@ oversize documents (over 2 MiB), and excessive nesting (over 32 levels) are reje
 Version `1.0` is intentionally closed: even additive fields require a new contract
 version and explicit consumer support. Never silently downgrade a future version.
 Tests include valid, invalid, and unsupported-version cases.
+For backward compatibility, validation and rendering can read historical `1.0`
+reports marked `complete` that contain unresolved high/critical findings. New report
+writes still reject that combination, and rendering escalates it to **Human Review
+Required** rather than treating the legacy status as clearance.
 
 Findings carry evidence and a disposition, checks carry the evaluated SHA, and review
 metadata carries both the head SHA and trusted configuration revision. JSON Schema
@@ -449,8 +453,9 @@ and while the PR remains current before each round. The caller still supplies tr
 environment approval, reporting-run identity, provider policy, and deployment storage.
 `PublishStoredAsync` reads a persisted report under the same lock; publication retries
 never re-enter inference. Recoverable cycle errors preserve a sanitized incomplete report
-and available ledger accounting, not a fabricated clean result. Failure to persist is
-an explicit error.
+and available ledger accounting, not a fabricated clean result. Once a claim is
+consumed, interruptions also persist `human-review-required` using a separate bounded
+settlement token. Failure to persist is an explicit error.
 
 `GitHubReviewContext` retrieves bounded textual patches and current Git blobs through
 the API, verifies blob hashes and patch addition/deletion counts, and rechecks PR state.

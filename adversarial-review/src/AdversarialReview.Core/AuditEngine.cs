@@ -62,7 +62,7 @@ public static partial class ReportRenderer
 
     public static string Render(AuditReport report, IEnumerable<string>? knownSecrets = null)
     {
-        Contracts.Write(report, "audit-report");
+        Contracts.WriteForDisplay(report, "audit-report");
         string[] secrets = (knownSecrets ?? []).Where(s => !string.IsNullOrEmpty(s))
             .OrderByDescending(s => s.Length).ToArray();
         string Safe(string text) => Escape(Redact(text, secrets));

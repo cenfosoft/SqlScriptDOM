@@ -61,6 +61,20 @@ public sealed class AuditTests
     }
 
     [TestMethod]
+    public void PreviouslyValidV10CompleteReportRemainsReadableAndEscalatesWhenRendered()
+    {
+        AuditReport legacy = Report([Fixture()]) with { Status = "complete", Blockers = [] };
+        string json = JsonSerializer.Serialize(legacy, Contracts.JsonOptions);
+
+        AuditReport read = Contracts.Read<AuditReport>(json, "audit-report");
+
+        Assert.AreEqual("complete", read.Status);
+        Assert.ThrowsException<ContractException>(() =>
+            Contracts.Write(read, "audit-report"));
+        StringAssert.Contains(ReportRenderer.Render(read), "Human Review Required");
+    }
+
+    [TestMethod]
     public void RejectsCrossShaDuplicateAndUnsafeEvidence()
     {
         Finding finding = Fixture();

@@ -49,10 +49,10 @@ public sealed class CycleTests
     private static Task<CycleResult> Run(
         Provider provider, Ledger ledger, ReviewConfiguration? config = null,
         Func<CancellationToken, Task<PullRequestState>>? readState = null,
-        CheckResult[]? checks = null, ReviewRound[]? history = null)
+        CheckResult[]? checks = null, ReviewRound[]? history = null, ReviewFile[]? files = null)
     {
         var context = new ReviewContext(FoundationTests.Sha, FoundationTests.OtherSha,
-            "Trusted guidance", "Untrusted diff", [], [], []);
+            "Trusted guidance", "Untrusted diff", files ?? [], [], []);
         return new ReviewCycle(provider, ledger).RunAsync(config ?? FoundationTests.Config(),
             FoundationTests.Run(), new("allancascante", "adversarial-review:run", FoundationTests.Sha,
                 "label-event-1", true, false), context, checks ?? FoundationTests.Checks(), history ?? [],
@@ -194,11 +194,15 @@ public sealed class CycleTests
         };
         var ledger = new Ledger();
 
-        CycleResult result = await Run(provider, ledger);
+        CycleResult result = await Run(provider, ledger, files: [new("src/example.cs", 2)]);
 
         Assert.AreEqual(3, provider.Requests.Count);
         Assert.AreEqual("incomplete", result.Report.Status);
         Assert.IsTrue(AuditEngine.RequiresHumanReview(result.Report));
+        Assert.AreEqual("completed", result.Report.Rounds.Single(r => r.Number == 3).Outcome);
+        Assert.AreEqual("CRITICAL-1", result.Report.Findings.Single().Id);
+        Assert.AreEqual("critical", result.Report.Findings.Single().Severity);
+        Assert.AreEqual("unreviewed", result.Report.Findings.Single().Disposition);
         Assert.AreEqual("human-review-required", ledger.FinalStatus);
         StringAssert.Contains(ReportRenderer.Render(result.Report), "Human Review Required");
     }
@@ -209,18 +213,24 @@ public sealed class CycleTests
         Finding high = new("1.0", "HIGH-1", FoundationTests.Sha, "reviewer", "security",
             "high", 0.9m, "High issue", "Unresolved high issue.",
             [new("file", "src/example.cs", "Relevant source evidence.", 1, 2)],
-            "Review and remediate.", "confirmed");
+            "Review and remediate.", "unreviewed");
         string findings = System.Text.Json.JsonSerializer.Serialize(new[] { high }, Contracts.JsonOptions);
         var provider = new Provider
         {
             Respond = (_, _) => Task.FromResult(new ModelResponse(findings, 10, 5, 1, 0.1m))
         };
 
-        CycleResult result = await Run(provider, new Ledger());
+        var ledger = new Ledger();
+        CycleResult result = await Run(provider, ledger, files: [new("src/example.cs", 2)]);
 
         Assert.AreEqual(1, provider.Requests.Count);
         Assert.AreEqual("incomplete", result.Report.Status);
         Assert.IsTrue(AuditEngine.RequiresHumanReview(result.Report));
+        Assert.AreEqual("completed", result.Report.Rounds.Single().Outcome);
+        Assert.AreEqual("HIGH-1", result.Report.Findings.Single().Id);
+        Assert.AreEqual("high", result.Report.Findings.Single().Severity);
+        Assert.AreEqual("unreviewed", result.Report.Findings.Single().Disposition);
+        Assert.AreEqual("human-review-required", ledger.FinalStatus);
     }
 
     [TestMethod]
