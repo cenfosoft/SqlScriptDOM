@@ -17,7 +17,7 @@
         "runAttempt": { "type": "integer", "minimum": 1 }
       }
     },
-    "check": { "enum": ["build", "test", "semgrep", "roslyn", "foundation"] },
+    "check": { "enum": ["build", "test", "semgrep", "roslyn", "foundation", "static-analysis", "preparation"] },
     "platform": { "enum": ["windows", "ubuntu", "independent"] },
     "conclusion": { "enum": ["passed", "failed", "cancelled", "missing"] },
     "files": {

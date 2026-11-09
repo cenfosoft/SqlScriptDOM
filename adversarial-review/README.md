@@ -240,8 +240,10 @@ matrices and build/test commands while publishing raw build logs and TRX results
 including failures where output is available. Drafts are skipped; ready-for-review
 events start validation. [Foundation validation](../.github/workflows/adversarial-review-validation.yml)
 runs the offline tool tests on Windows and Ubuntu, without model credentials or PR
-write permission. Artifacts currently use the repository's existing retention setting;
-the team must approve a retention policy before live review.
+write permission. Its enforced suite total is 173, up from the 172-test Phase 1
+reference after adding manifest-schema coverage for the preparation and static-analysis
+checks. Artifacts currently use the repository's existing retention setting; the team
+must approve a retention policy before live review.
 
 Trusted consumption must verify workflow provenance and safe archive extraction
 **before** parsing a manifest; checksum validation alone is insufficient. Semgrep
@@ -366,12 +368,27 @@ explicitly marked incomplete/stale with no model rounds and no numeric risk scor
 Missing analyzers remain blockers. Expected command failures exit nonzero and write
 a constant-content `failure.json` without source, tokens, exception text, or provider
 payloads, validated by [its versioned schema](schemas/preparation-failure.schema.json).
-Output files are create-new only. The workflow uploads available reports
-with `always()`; build/setup failures are still visible as failed jobs and may produce
-no report. Actual Actions/fork runs and environment approval behavior remain unverified.
+Output files are create-new only. The workflow also stores build/preparation logs and
+a SHA-256 manifest that records the repository, PR, head SHA, workflow run ID, attempt,
+and hashes of available files. Validation and static-analysis artifacts use the same
+identity fields; reruns have distinct artifact names and never replace evidence from an
+earlier attempt. The manifest is an integrity checksum, not an authenticity proof;
+trusted admission must still verify identity against GitHub metadata. The workflow
+uploads available reports with `always()`; build/setup failures are still visible as
+failed jobs and may produce no report. Actual Actions/fork runs and environment
+approval behavior remain unverified.
 There is no automatically posted comment and no paid execution step in this workflow.
 Disable this preparation workflow separately if metadata preparation itself must stop;
 `enabled: false` controls paid execution, not this read-only diagnostic path.
+
+HU-03 operational acceptance is still blocked: the repository's environments API
+currently reports no configured environments, so no required approver can be named or
+verified. The requested required reviewers for `adversarial-review` are
+`rvillarrealf` and `allancascante`; repository settings must still be configured and
+verified. The authorized label actor is not implicitly an environment approver. The
+feature branch also has no Actions runs yet. Local tests do not replace the required
+approval-wait run, same-repository/fork pilots, or screenshots showing run links, SHA,
+and jobs.
 
 - A structural validation failure exits nonzero without echoing document contents.
   Fix the input rather than relaxing schema enforcement.
