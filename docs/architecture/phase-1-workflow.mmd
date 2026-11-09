@@ -1,0 +1,52 @@
+flowchart TD
+    contributor["Contributor opens or updates a pull request"] --> draft{"Draft pull request?"}
+    draft -- Yes --> wait["Skip validation requiring an active review; no model invocation"]
+    draft -- No --> checks["GitHub Actions validation on the PR revision"]
+
+    subgraph untrusted["Untrusted validation boundary"]
+        checks --> matrix["Build and test on Windows and Ubuntu"]
+        matrix --> analyzers["Roslyn / Semgrep checks when configured"]
+        analyzers --> evidence["Upload bounded logs and SHA/run/attempt-bound evidence manifests"]
+    end
+
+    evidence --> pass{"All required checks pass for the current PR head?"}
+    pass -- No --> stop["Stop; preserve failed or incomplete diagnostics; no model call"]
+    pass -- Yes --> authorization{"Explicit authorized maintainer action, current SHA, and approved environment?"}
+    authorization -- No --> stop
+
+    subgraph phase1["Phase 1: current preparation/report-only behavior"]
+        authorization --> trusted["Use trusted default-branch workflow and configuration"]
+        trusted --> verify["Read GitHub metadata; validate artifact origin, SHA, run attempt, completeness, checksums, and bounds"]
+        verify --> ready["Create a sanitized preparation/audit artifact"]
+        ready --> noInference["Current prepare workflow performs no inference and does not change code, approve, label, or merge"]
+    end
+
+    subgraph future["Future gated review; disabled until policy and deployment are approved"]
+        ready -. "Only after activation gates" .-> budgets["Reserve approved round, time, token, and spend budgets"]
+        budgets --> review["Send bounded untrusted context to configured Copilot SDK model; no tools or repository writes"]
+        review --> validate["Validate structured response and deterministic policy; retry/rotate only within reserved limits"]
+        validate --> report["Publish a redacted advisory report and auditable model-round metadata"]
+    end
+
+    subgraph merge["Independent human-controlled integration"]
+        checks --> protect["main requires real Windows/Ubuntu checks and one non-author approval"]
+        analyzers -. "Required status check" .-> protect
+        protect --> human["Peer reviewer inspects diff, checks, and advisory evidence"]
+        human --> decision{"Human approval and all required policies satisfied?"}
+        decision -- No --> revise["Request changes or keep PR open"]
+        decision -- Yes --> mergePR["Maintainer merges; no bot approval or automatic merge"]
+    end
+
+    subgraph metrics["Read-only historical measurement"]
+        operator["Maintainer runs the baseline CLI with explicit window, page cap, and sources"] --> collector[".NET baseline collector"]
+        collector --> api["Read GitHub PRs and timelines from cenfosoft/SqlScriptDOM and microsoft/SqlScriptDOM"]
+        api --> cohorts["Separate merged durations from right-censored open ages; exclude configured cohorts"]
+        cohorts --> files["Write provenance-preserving JSON and Markdown locally"]
+    end
+
+    classDef untrusted fill:#ffe4df,stroke:#a63a24,color:#111
+    classDef trusted fill:#e1f3e5,stroke:#237a3b,color:#111
+    classDef future fill:#fff3cd,stroke:#8a6d3b,color:#111
+    class checks,matrix,analyzers,evidence untrusted
+    class trusted,verify,ready,noInference trusted
+    class budgets,review,validate,report future

@@ -411,6 +411,8 @@ Repeated runs update one comment, stale runs cannot overwrite current results, a
 - [x] Include human-authored open PRs as a separate open-age/censored cohort so they are visible without inventing a merge date.
 - [x] Exclude bot-authored PRs, closed-unmerged PRs, and PRs that are drafts at the observation date.
 - [x] Implement an extensible .NET baseline extraction command with configurable months and bounded pagination, separate open/merged cohorts, and explicit completeness diagnostics.
+- [x] Generate a comparative JSON and Markdown report for the fork and upstream, including per-PR source links and explicit filter/cohort rules.
+- [x] Recollect the six-month baseline after the metric contract changes; keep the raw report outside version control until retention/access policy is approved.
 - [ ] Record workflow latency, model latency, tokens, estimated cost, result, and failure reason.
 - [ ] Define how maintainers mark findings valid, false positive, accepted risk, or duplicate.
 - [ ] Define where aggregate metrics live and who can access them.
@@ -425,6 +427,17 @@ diagnostics: **1 merged human PR**, merged-only median **17.7464 hours**, and
 be combined. The fork sample is too small to estimate improvement or calibrate
 thresholds; the same command can target upstream or a longer window after scope
 approval. Raw JSON is kept outside the repository pending retention/access policy.
+
+**Comparative observation (2026-11-09 UTC):** the six-month collection completed
+for both `cenfosoft/SqlScriptDOM` and `microsoft/SqlScriptDOM`. The fork had
+**2 merged PRs** (median **243.36125 hours**) and **7 open, right-censored PRs**;
+the upstream sample had **15 merged PRs** (median **115.76778 hours**) and
+**3 open, right-censored PRs**. Open ages are not included in either median.
+The cohorts are descriptive and not directly comparable; no improvement claim,
+target, or minimum sample threshold is approved. The generated JSON/Markdown
+reports remain in temporary local storage rather than git, pending retention
+and access approval. The reproducible command and exact filters are in the
+[metrics runbook](../adversarial-review/README.md).
 
 **Exit criteria**
 
@@ -560,6 +573,7 @@ Work on schemas and baseline definitions can proceed in parallel after M1. Secre
 
 | Date | Update | Evidence / next step |
 |---|---|---|
+| November 9, 2026 (UTC) | Completed the HU-05 fork/upstream report, documented AI prompt/tool provenance, added the workflow diagram, and read back the live `main` protection settings for HU-06. | Both metric collections complete; 2/15 merged samples and 7/3 separately censored open PRs. `main` requires five checks and one post-push approval. CLI and test assemblies compile; the Roslyn build succeeds with five existing `SYSLIB0051` warnings. Local test execution was blocked because Windows Application Control denied loading generated DLLs (`0x800711C7`); verify through GitHub Actions. PR #15 still needs a fresh static-analysis run. The `adversarial-review` environment and agreed reviewer roster remain unconfigured/unverified. See [governance evidence](repository-governance.md). |
 | October 18, 2026 (UTC) | Pushed the implementation branch and opened draft PR #3 in the fork for team review, using the repository PR template and documenting incomplete activation/pilot criteria. | [Draft PR](https://github.com/cenfosoft/SqlScriptDOM/pull/3). Refreshed local verification: 172 tooling tests and 1,176 parser tests passed; CLI build zero warnings/errors; actionlint 1.7.7 passed. Standard PR creation encountered upstream-parent SAML metadata access; direct fork REST creation succeeded without accessing upstream resources. No paid inference or environment configuration performed. |
 | October 18, 2026 (UTC) | Added a read-only default-branch `pull_request_target:labeled` preparation workflow, protected-environment reference, and `prepare-review` CLI with sanitized reports/failure artifacts. It cannot invoke inference even when configuration is enabled. | Tooling suite: 172 passed; CLI build: 0 warnings/errors; actionlint 1.7.7 passed for preparation and both existing validation workflows. Added webhook/disabled-path tests, authorization revocation recovery, and archive expansion/count ceiling tests. Manual inputs and deployment-specific remaining work are enumerated above; no remote installation or paid activation performed. |
 | October 18, 2026 (UTC) | Connected admission/evidence/context/engine/ledger through a persistent host with fail-fast per-PR locks, immutable sanitized reports, durable SHA-bound model history, and stored-report publication retries. Added bounded Git blob context retrieval with content-hash and patch-count checks. | Tooling suite: 161 passed, including full synthetic host cycles, cross-authorization rotation, replay, failure persistence, publication without inference, and non-destructive v1-to-v2 ledger migration. Host infrastructure, retention, live billing enforcement, and pilot remain manual prerequisites; no paid workflow enabled. |
@@ -714,15 +728,15 @@ Record decisions in Section 12. Questions marked **BLOCKING** must be answered b
 
 ### 11.9 Metrics and Baseline
 
-69. **BLOCKING:** What date range defines the pre-intervention lead-time baseline?
-70. **BLOCKING:** What event starts lead time: PR opening, ready-for-review, first review request, or first non-draft commit?
-71. **BLOCKING:** What event ends lead time: merge, closure, approval, or merge-ready state?
-72. Should abandoned, draft-only, bot, dependency, and documentation PRs be excluded?
+69. What date range defines the pre-intervention lead-time baseline? **D-007:** the previous six calendar months relative to each repository's UTC extraction time.
+70. What event starts lead time? **D-007:** the first `ready_for_review` event; use PR creation only when a complete timeline shows the PR was initially non-draft.
+71. What event ends lead time? **D-007:** GitHub `merged_at`; exclude closed-unmerged PRs and report open PRs as right-censored.
+72. Should abandoned, draft-only, bot, dependency, and documentation PRs be excluded? **D-018:** exclude bots, currently draft PRs, and closed-unmerged PRs; human dependency and documentation PRs remain included.
 73. How will maintainers classify findings as valid, false positive, accepted risk, or duplicate?
 74. Where may aggregate metrics be stored: repository artifacts, a committed anonymized dataset, GitHub Insights export, or external storage?
 75. Who can access raw metric data?
 76. What cost currency and pricing source should be used?
-77. What Phase 1 baseline report format is expected: Markdown, CSV/JSON, dashboard, or all of these?
+77. What Phase 1 baseline report format is expected? **HU-05:** JSON and Markdown, with source, window, filter profile, cohort counts, exclusions, and diagnostics.
 78. Are there target values already agreed for latency, cost, false-positive rate, or lead-time improvement?
 
 ### 11.10 Pilot, Operations, and Ownership
@@ -748,7 +762,7 @@ Add approved answers here; do not rely only on chat history.
 | D-004 | October 16, 2026 | Use .NET/C# for all Phase 1 implementation, including baseline extraction. | Entire team | Do not add Python or PowerShell orchestration dependencies. |
 | D-005 | October 16, 2026 | Evaluate all PRs in the fork and design the complete change set for a future upstream proposal. | Entire team | Avoid fork-specific assumptions and path filters that exclude non-parser changes. |
 | D-006 | Pending | Phase 1 budgets and limits. | TBD | Blocks timeouts, retries, token limits, and cost controls. |
-| D-007 | October 16, 2026 | Baseline the previous six months from ready-for-review to merge using an extensible .NET command; report open human PRs as a separate open-age/censored cohort. | Entire team | Define bot, never-ready draft, closed-unmerged, output, and insufficient-sample policies. |
+| D-007 | October 16, 2026; reconfirmed November 9, 2026 | Baseline the previous six months from ready-for-review to merge using an extensible .NET command; report open human PRs as a separate open-age/censored cohort. | Entire team | The requester selected this approved definition when asked to resolve the conflict with “PR opened.” D-018 sets bot, current-draft, and closed-unmerged exclusions. JSON and Markdown are required by HU-05. No minimum sample threshold or impact target has been approved. |
 | D-008 | October 16, 2026 | Target report-only CI/CD automation by November 5, 2026 and integration tuning by November 19, 2026. | Entire team | Sequence M1–M5 for November 5 and M6–M7 for November 19. |
 | D-009 | October 16, 2026 | The entire team owns formal Phase 1 acceptance. | Entire team | Acceptance evidence must be reviewable by all team members. |
 | D-010 | October 16, 2026 | Open-source content may be sent to configured external providers and providers may retain requests. | Entire team | Document each selected provider's actual terms before enabling it. |

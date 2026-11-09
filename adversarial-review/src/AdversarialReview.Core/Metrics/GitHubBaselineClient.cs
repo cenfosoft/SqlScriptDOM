@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 
@@ -37,9 +38,21 @@ public sealed class GitHubBaselineClient
     public async Task<RepositorySnapshot> FetchSnapshotAsync(string owner, string repository,
         CancellationToken cancellationToken = default)
     {
+        return await FetchSnapshotAsync(owner, repository, 6, cancellationToken);
+    }
+
+    public async Task<RepositorySnapshot> FetchSnapshotAsync(string owner, string repository, int months,
+        CancellationToken cancellationToken = default)
+    {
         ValidateSegment(owner, nameof(owner));
         ValidateSegment(repository, nameof(repository));
+        if (months < 1 || months > 1200)
+        {
+            throw new ArgumentOutOfRangeException(nameof(months), "Use between 1 and 1200 trailing calendar months.");
+        }
+
         DateTimeOffset observedAt = timeProvider.GetUtcNow();
+        DateTimeOffset earliestRelevantStart = observedAt.AddMonths(-months);
         string path = $"repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repository)}";
         var diagnostics = new List<BaselineDiagnostic>();
         var pulls = new List<PullRequestSnapshot>();
@@ -77,7 +90,8 @@ public sealed class GitHubBaselineClient
                 if (!pr.IsDraft && pr.State is "open" or "closed"
                     && (pr.State == "open" || pr.MergedAt is not null)
                     && pr.AuthorType.Equals("User", StringComparison.OrdinalIgnoreCase)
-                    && !pr.AuthorLogin.EndsWith("[bot]", StringComparison.OrdinalIgnoreCase))
+                    && !pr.AuthorLogin.EndsWith("[bot]", StringComparison.OrdinalIgnoreCase)
+                    && pr.UpdatedAt >= earliestRelevantStart)
                 {
                     (TimelineStatus status, IReadOnlyList<ReadinessEvent> events) =
                         await FetchTimelineAsync($"{path}/issues/{pr.Number}/timeline", cancellationToken);
@@ -112,7 +126,13 @@ public sealed class GitHubBaselineClient
             PageResult result = await GetPageAsync($"{path}?per_page=100&page={page}", cancellationToken);
             if (result.Error is not null)
             {
-                return (result.Error == "Malformed" ? TimelineStatus.Malformed : TimelineStatus.Unavailable, events);
+                TimelineStatus status = result.Error switch
+                {
+                    "Malformed" => TimelineStatus.Malformed,
+                    "RateLimited" => TimelineStatus.RateLimited,
+                    _ => TimelineStatus.Unavailable
+                };
+                return (status, events);
             }
 
             foreach (JsonElement item in result.Items)
@@ -160,6 +180,14 @@ public sealed class GitHubBaselineClient
             using HttpResponseMessage response = await httpClient.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
+                if (response.StatusCode == HttpStatusCode.TooManyRequests
+                    || (response.StatusCode == HttpStatusCode.Forbidden
+                        && response.Headers.TryGetValues("X-RateLimit-Remaining", out IEnumerable<string>? remaining)
+                        && remaining.Any(value => value == "0")))
+                {
+                    return new([], false, "RateLimited");
+                }
+
                 return new([], false, $"Http{(int)response.StatusCode}");
             }
 

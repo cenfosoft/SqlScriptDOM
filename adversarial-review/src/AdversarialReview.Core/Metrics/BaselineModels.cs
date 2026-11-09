@@ -6,6 +6,7 @@ public enum TimelineStatus
 {
     Complete,
     Unavailable,
+    RateLimited,
     Malformed,
     PageLimitReached,
     NotRequested
@@ -40,6 +41,7 @@ public sealed record RepositorySnapshot(
 
 public sealed record BaselinePullRequest(
     int Number,
+    string Url,
     DateTimeOffset ReadyAt,
     DateTimeOffset EndAt,
     double DurationHours);
@@ -67,3 +69,15 @@ public sealed record BaselineReport(
     OpenBaselineCohort OpenCensored,
     IReadOnlyDictionary<string, int> ExclusionCounts,
     IReadOnlyList<BaselineDiagnostic> Diagnostics);
+
+public sealed record BaselineCollectionReport(
+    string SchemaVersion,
+    DateTimeOffset GeneratedAt,
+    int Months,
+    int MaxPages,
+    string FilterProfile,
+    string StartEvent,
+    string EndEvent,
+    string TimeZone,
+    IReadOnlyList<string> Filters,
+    IReadOnlyList<BaselineReport> Repositories);

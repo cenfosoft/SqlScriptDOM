@@ -30,6 +30,16 @@ public sealed class EvidenceTests
         Assert.ThrowsException<ContractException>(() => manifest.Verify(directory, identity with { RunAttempt = 2 }));
     }
 
+    [DataTestMethod]
+    [DataRow("ubuntu-latest", "ubuntu")]
+    [DataRow("windows-latest", "windows")]
+    public void NormalizesGitHubRunnerLabelsToManifestPlatforms(string runner, string platform)
+    {
+        EvidenceManifest manifest = EvidenceManifest.Create(directory, identity, "static-analysis", runner, "passed");
+
+        Assert.AreEqual(platform, manifest.Platform);
+    }
+
     [TestMethod]
     public void TamperingUnexpectedFilesAndDuplicatePathsAreRejected()
     {
