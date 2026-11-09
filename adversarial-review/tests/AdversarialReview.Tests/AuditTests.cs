@@ -41,13 +41,37 @@ public sealed class AuditTests
     }
 
     [TestMethod]
-    public void HighSeverityFindingsRemainVisibleWithoutChangingExecutionCompleteness()
+    public void HighSeverityFindingsEscalateWithoutInventingNumericRisk()
     {
         var report = Report([Fixture()]);
-        Assert.AreEqual("complete", report.Status);
-        Assert.AreEqual(1, report.Blockers.Length);
+        Assert.AreEqual("incomplete", report.Status);
+        Assert.IsTrue(AuditEngine.RequiresHumanReview(report));
+        Assert.IsTrue(report.Blockers.Length >= 1);
         StringAssert.Contains(report.Blockers[0], "Unresolved high");
         Assert.IsNull(report.RiskScore);
+        StringAssert.Contains(ReportRenderer.Render(report), "Human Review Required");
+    }
+
+    [TestMethod]
+    public void CompleteStatusCannotHideUnresolvedHighRisk()
+    {
+        AuditReport report = Report([Fixture()]);
+        Assert.ThrowsException<ContractException>(() =>
+            Contracts.Write(report with { Status = "complete" }, "audit-report"));
+    }
+
+    [TestMethod]
+    public void PreviouslyValidV10CompleteReportRemainsReadableAndEscalatesWhenRendered()
+    {
+        AuditReport legacy = Report([Fixture()]) with { Status = "complete", Blockers = [] };
+        string json = JsonSerializer.Serialize(legacy, Contracts.JsonOptions);
+
+        AuditReport read = Contracts.Read<AuditReport>(json, "audit-report");
+
+        Assert.AreEqual("complete", read.Status);
+        Assert.ThrowsException<ContractException>(() =>
+            Contracts.Write(read, "audit-report"));
+        StringAssert.Contains(ReportRenderer.Render(read), "Human Review Required");
     }
 
     [TestMethod]

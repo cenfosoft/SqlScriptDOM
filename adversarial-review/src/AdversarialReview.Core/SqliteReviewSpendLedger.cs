@@ -67,13 +67,14 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
             throw new ContractException("Monthly repository reservation limit would be exceeded.");
         }
         await ExecuteAsync(connection, transaction, """
-            INSERT INTO claims(repository, authorization_id, pull_request, head_sha,
+            INSERT INTO claims(repository, authorization_id, pull_request, head_sha, authorized_actor, authorization_label,
                 maximum_micro_usd, monthly_limit_micro_usd, maximum_rounds, month, expires_utc_ticks)
-            VALUES($repo, $auth, $pr, $sha, $maximum, $limit, $rounds, $month, $expires);
+            VALUES($repo, $auth, $pr, $sha, $actor, $label, $maximum, $limit, $rounds, $month, $expires);
             UPDATE monthly_budgets SET reserved_micro_usd = reserved_micro_usd + $maximum
             WHERE repository = $repo AND month = $month;
             """, cancellationToken, ("$repo", repository), ("$auth", claim.AuthorizationId),
-            ("$pr", claim.PullRequest), ("$sha", claim.HeadSha), ("$maximum", maximum),
+            ("$pr", claim.PullRequest), ("$sha", claim.HeadSha), ("$actor", claim.AuthorizedActor),
+            ("$label", claim.AuthorizationLabel), ("$maximum", maximum),
             ("$limit", limit), ("$rounds", claim.MaximumRounds), ("$month", month),
             ("$expires", expires.UtcTicks));
         await transaction.CommitAsync(cancellationToken);
@@ -142,6 +143,33 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
         await transaction.CommitAsync(cancellationToken);
     }
 
+    public async Task RecordFinalStatusAsync(CycleClaim claim, string status, CancellationToken cancellationToken)
+    {
+        (string repository, long maximum, long limit) = ValidateClaim(claim);
+        if (status is not ("complete" or "incomplete" or "stale" or "human-review-required"))
+            throw new ContractException("Invalid final review status.");
+        using SqliteConnection connection = new(connectionString);
+        await OpenAsync(connection, cancellationToken);
+        using SqliteTransaction transaction = connection.BeginTransaction(deferred: false);
+        await InitializeAsync(connection, transaction, cancellationToken);
+        await VerifyClaimAsync(connection, transaction, claim, repository, maximum, limit, cancellationToken);
+        object? existing = await ScalarAsync(connection, transaction, """
+            SELECT final_status FROM claims WHERE repository = $repo AND authorization_id = $auth;
+            """, cancellationToken, ("$repo", repository), ("$auth", claim.AuthorizationId));
+        if (existing is string existingStatus)
+        {
+            if (existingStatus != status)
+                throw new ContractException("The cycle already has a conflicting final status.");
+            await transaction.CommitAsync(cancellationToken);
+            return;
+        }
+        await ExecuteAsync(connection, transaction, """
+            UPDATE claims SET final_status = $status
+            WHERE repository = $repo AND authorization_id = $auth AND final_status IS NULL;
+            """, cancellationToken, ("$status", status), ("$repo", repository), ("$auth", claim.AuthorizationId));
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     private static async Task OpenAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {
         await connection.OpenAsync(cancellationToken);
@@ -154,7 +182,7 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
         CancellationToken cancellationToken)
     {
         long version = (long)(await ScalarAsync(connection, transaction, "PRAGMA user_version;", cancellationToken))!;
-        if (version == 2) return;
+        if (version == 3) return;
         if (version == 1)
         {
             await ExecuteAsync(connection, transaction, """
@@ -163,6 +191,17 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
                 ALTER TABLE rounds ADD COLUMN selection_reason TEXT;
                 ALTER TABLE rounds ADD COLUMN prompt_version TEXT;
                 PRAGMA user_version = 2;
+                """, cancellationToken);
+            version = 2;
+        }
+        if (version == 2)
+        {
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE claims ADD COLUMN authorized_actor TEXT;
+                ALTER TABLE claims ADD COLUMN authorization_label TEXT;
+                ALTER TABLE claims ADD COLUMN final_status TEXT
+                    CHECK(final_status IS NULL OR final_status IN ('complete', 'incomplete', 'stale', 'human-review-required'));
+                PRAGMA user_version = 3;
                 """, cancellationToken);
             return;
         }
@@ -179,16 +218,18 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
             CREATE TABLE claims(
                 repository TEXT NOT NULL, authorization_id TEXT NOT NULL,
                 pull_request INTEGER NOT NULL CHECK(pull_request > 0), head_sha TEXT NOT NULL,
+                authorized_actor TEXT NOT NULL, authorization_label TEXT NOT NULL,
                 maximum_micro_usd INTEGER NOT NULL CHECK(maximum_micro_usd > 0),
                 monthly_limit_micro_usd INTEGER NOT NULL CHECK(monthly_limit_micro_usd > 0),
-                maximum_rounds INTEGER NOT NULL CHECK(maximum_rounds BETWEEN 1 AND 100),
+                maximum_rounds INTEGER NOT NULL CHECK(maximum_rounds BETWEEN 1 AND 3),
                 month TEXT NOT NULL, expires_utc_ticks INTEGER NOT NULL,
+                final_status TEXT CHECK(final_status IS NULL OR final_status IN ('complete', 'incomplete', 'stale', 'human-review-required')),
                 PRIMARY KEY(repository, authorization_id),
                 FOREIGN KEY(repository, month) REFERENCES monthly_budgets(repository, month)
             ) STRICT;
             CREATE TABLE rounds(
                 repository TEXT NOT NULL, authorization_id TEXT NOT NULL,
-                number INTEGER NOT NULL CHECK(number BETWEEN 1 AND 100), fingerprint TEXT NOT NULL,
+                number INTEGER NOT NULL CHECK(number BETWEEN 1 AND 3), fingerprint TEXT NOT NULL,
                 input_tokens INTEGER CHECK(input_tokens >= 0), output_tokens INTEGER CHECK(output_tokens >= 0),
                 latency_ms INTEGER NOT NULL CHECK(latency_ms >= 0),
                 cost_micro_usd INTEGER CHECK(cost_micro_usd >= 0),
@@ -197,7 +238,7 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
                 PRIMARY KEY(repository, authorization_id, number),
                 FOREIGN KEY(repository, authorization_id) REFERENCES claims(repository, authorization_id)
             ) STRICT;
-            PRAGMA user_version = 2;
+            PRAGMA user_version = 3;
             """, cancellationToken);
     }
 
@@ -205,7 +246,7 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
         CancellationToken cancellationToken, string? authorizationId = null)
     {
         // Reuse claim identity validation without making or releasing any reservation.
-        ValidateClaim(new(repository, pullRequest, headSha, "history-read", 1, 1, 1));
+        ValidateClaim(new(repository, pullRequest, headSha, "history-read", 1, 1, 1, "history-reader", "history-read"));
         using SqliteConnection connection = new(connectionString);
         await OpenAsync(connection, cancellationToken);
         using SqliteTransaction transaction = connection.BeginTransaction(deferred: false);
@@ -240,9 +281,12 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
         object? expires = await ScalarAsync(connection, transaction, """
             SELECT expires_utc_ticks FROM claims
             WHERE repository = $repo AND authorization_id = $auth AND pull_request = $pr AND head_sha = $sha
+                AND (authorized_actor IS NULL OR authorized_actor = $actor)
+                AND (authorization_label IS NULL OR authorization_label = $label)
                 AND maximum_micro_usd = $maximum AND monthly_limit_micro_usd = $limit AND maximum_rounds = $rounds;
             """, cancellationToken, ("$repo", repository), ("$auth", claim.AuthorizationId),
-            ("$pr", claim.PullRequest), ("$sha", claim.HeadSha), ("$maximum", maximum),
+            ("$pr", claim.PullRequest), ("$sha", claim.HeadSha), ("$actor", claim.AuthorizedActor),
+            ("$label", claim.AuthorizationLabel), ("$maximum", maximum),
             ("$limit", limit), ("$rounds", claim.MaximumRounds));
         return expires is long value ? value
             : throw new ContractException("Unknown claim or immutable claim data does not match.");
@@ -273,7 +317,10 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
         if (parts.Length != 2 || parts.Any(p => p.Length is < 1 or > 100 || p is "." or ".."
             || !p.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '.' or '-'))
             || claim.PullRequest <= 0 || claim.HeadSha is null || !Contracts.IsSha(claim.HeadSha)
-            || !ValidText(claim.AuthorizationId) || claim.MaximumRounds is < 1 or > 100)
+            || !ValidText(claim.AuthorizationId)
+            || claim.AuthorizedActor is null || !System.Text.RegularExpressions.Regex.IsMatch(
+                claim.AuthorizedActor, "^[A-Za-z0-9-]{1,39}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant)
+            || !ValidText(claim.AuthorizationLabel) || claim.MaximumRounds is < 1 or > ReviewConfiguration.MaxRounds)
             throw new ContractException("Invalid cycle claim identity or round limit.");
         long maximum = MicroUsd(claim.MaximumCostUsd);
         long limit = MicroUsd(claim.MonthlyLimitUsd);
