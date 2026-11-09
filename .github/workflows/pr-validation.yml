@@ -12,6 +12,7 @@ jobs:
     if: ${{ !github.event.pull_request.draft }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
     steps:
@@ -44,6 +45,7 @@ jobs:
   test: 
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
     needs: build
@@ -84,6 +86,7 @@ jobs:
     needs: [build, test]
     runs-on: ${{ matrix.os }}
     strategy:
+        fail-fast: false
         matrix:
           os: [windows-latest, ubuntu-latest]
     steps:
