@@ -193,15 +193,18 @@ starting point. Prompt-injection resilience still needs live pilot evaluation.
 ## Lead-time baseline
 
 ```text
-dotnet run --project adversarial-review/src/AdversarialReview.Cli -- baseline cenfosoft SqlScriptDOM baseline.json 6 100
+dotnet run --project adversarial-review/src/AdversarialReview.Cli -- baseline 6 100 phase1-human-nondraft-merged-only baseline.json baseline.md cenfosoft/SqlScriptDOM microsoft/SqlScriptDOM
 ```
 
 Supply a read-only GitHub API token using `GH_TOKEN`, never a command-line argument.
-The final parameters are trailing calendar months (default 6) and the per-resource
-pagination cap (default 100). Every request has a 30-second timeout and collection
-has a ten-minute cancellation limit. Outputs are new files; existing files are not
-overwritten. No paid model API is used. For a small sample, rerun into a different
-file with a longer month range; inspect completeness before comparing results.
+The arguments explicitly select the trailing calendar-month window, per-resource
+pagination cap, approved exclusion profile, JSON and Markdown outputs, and one or
+more `owner/repository` sources. The comparison must include both `cenfosoft/SqlScriptDOM` and
+`microsoft/SqlScriptDOM`; both are fetched read-only. Every request has a 30-second
+timeout and the combined collection has a ten-minute cancellation limit. Outputs
+are new files; existing files are not overwritten. No paid model API is used.
+The command exits with code **3** if either repository is incomplete; inspect
+diagnostics before using or comparing its cohorts.
 
 The command collects a **current-state** snapshot, not a reconstruction of arbitrary
 historical PR states. It scans PRs regardless of creation date so an older PR readied
@@ -209,20 +212,40 @@ recently is not lost. Timelines establish the first ready-for-review event; crea
 is used only when a complete timeline has no draft/readiness transitions. Ambiguous
 or unavailable timelines are diagnosed, not guessed.
 
-- Merged human PRs: ready-for-review to merge, with merged-only count/median hours.
-- Open non-draft human PRs: ready-for-review to observation, as a separate censored
-  cohort. Do not treat open age as completed lead time.
+- Merged human PRs: first ready-for-review (or creation if initially non-draft) to
+  `merged_at`, with merged-only count and median elapsed hours.
+- Open non-draft human PRs: the same start event to the repository extraction time,
+  reported separately as a right-censored cohort. Do not treat open age as completed
+  lead time.
+- The inclusive trailing calendar-month window is applied to the start event, not
+  `created_at`; timestamps are compared as UTC instants and durations are elapsed
+  hours. Fork and upstream extraction timestamps can differ slightly.
 - Excluded: bots, currently draft PRs, closed-unmerged PRs, and readiness outside
-  the trailing window. Human documentation-only PRs remain in scope.
+  the window. Human dependency and documentation-only PRs remain in scope; no
+  topic or label exclusions are applied. Unknown/malformed author or PR state,
+  duplicate PRs, incomplete timelines, and ambiguous histories make the
+  collection incomplete and are diagnosed, not inferred.
+- PRs last updated before the window are not sent a timeline request: their
+  readiness cannot occur after their last update. The collector still scans PR
+  list pages to find older PRs updated within the window.
+- GitHub rate-limit responses (`429`, or `403` with zero remaining quota) are
+  reported as `RateLimited`, mark the collection incomplete, and produce exit
+  code **3**. The client does not retry blindly or claim a complete sample.
 
-The JSON records observation/range, durations, exclusions, limitations, and diagnostics.
-`isComplete: false` and exit code **3** indicate truncated, unavailable, malformed,
-or inconsistent evidence; partial cohorts must not be presented as a complete baseline.
+The JSON records the collection policy, extraction timestamp, both source repositories,
+per-source observation/range, PR numbers with full repository provenance, durations,
+cohort counts, exclusions, limitations, and diagnostics. The Markdown report provides
+the comparable per-repository summary and separate merged/open tables. A median is
+unavailable when there are no eligible merges. The report does not set a minimum sample
+threshold or improvement target; both require Product Owner approval. Never claim
+causality or improvement from an incomplete, open, or otherwise non-comparable sample.
 Argument/input failures exit **1**, and command syntax errors exit **2**.
 Snapshots can be recalculated offline through `BaselineCalculator.Calculate`.
-Raw snapshots contain PR numbers and timestamps, not source, prompts, or credentials.
-Storage, retention, and access policy still require team approval; do not automatically
-commit or upload a raw dataset.
+The report contains public PR numbers, URLs, and timestamps, not author names,
+source, prompts, or credentials. Raw API snapshots are not emitted. Offline
+recalculation requires a separately authorized saved `RepositorySnapshot` passed to
+`BaselineCalculator.Calculate`. Storage, retention, and access policy still require
+team approval; do not automatically commit or upload a raw dataset.
 
 ## Deterministic evidence
 

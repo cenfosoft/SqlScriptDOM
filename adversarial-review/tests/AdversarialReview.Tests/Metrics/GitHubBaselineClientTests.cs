@@ -83,6 +83,40 @@ public sealed class GitHubBaselineClientTests
     }
 
     [TestMethod]
+    public async Task DoesNotFetchTimelinesForPullRequestsNotUpdatedInTheMeasurementWindow()
+    {
+        int requests = 0;
+        using var http = CreateHttp((request, _) =>
+        {
+            requests++;
+            return Task.FromResult(Json(request.RequestUri!.AbsolutePath.EndsWith("/pulls", StringComparison.Ordinal)
+                ? $"[{PullJson(1, created: "2024-01-01T00:00:00Z", updated: "2026-04-15T00:00:00Z")}]"
+                : "[]"));
+        });
+
+        BaselineReport report = await new BaselineCollector(Client(http)).CollectAsync("o", "r");
+
+        Assert.AreEqual(1, requests);
+        Assert.AreEqual(1, report.ExclusionCounts["OutsideReadinessWindow"]);
+        Assert.IsTrue(report.IsComplete);
+    }
+
+    [TestMethod]
+    public async Task ReportsRateLimitedTimelineAsIncompleteWithoutInferringReadiness()
+    {
+        using var http = CreateHttp((request, _) => Task.FromResult(
+            request.RequestUri!.AbsolutePath.EndsWith("/pulls", StringComparison.Ordinal)
+                ? Json($"[{PullJson(1)}]")
+                : new HttpResponseMessage(HttpStatusCode.TooManyRequests)));
+
+        BaselineReport report = await new BaselineCollector(Client(http)).CollectAsync("o", "r");
+
+        Assert.IsFalse(report.IsComplete);
+        Assert.AreEqual(1, report.ExclusionCounts["TimelineRateLimited"]);
+        Assert.IsTrue(report.Diagnostics.Any(d => d.Code == "TimelineRateLimited"));
+    }
+
+    [TestMethod]
     public async Task PullRequestPageCapIsExplicitAndStillReportsKnownData()
     {
         using var http = CreateHttp((request, _) =>
@@ -171,7 +205,7 @@ public sealed class GitHubBaselineClientTests
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.TooManyRequests)));
         BaselineReport failed = await new BaselineCollector(Client(unavailable)).CollectAsync("o", "r");
         Assert.IsFalse(failed.IsComplete);
-        Assert.IsTrue(failed.Diagnostics.Any(d => d.Code == "PullRequestsHttp429"));
+        Assert.IsTrue(failed.Diagnostics.Any(d => d.Code == "PullRequestsRateLimited"));
     }
 
     [DataTestMethod]
@@ -269,13 +303,14 @@ public sealed class GitHubBaselineClientTests
         new(HttpStatusCode.OK) { Content = new StringContent(content, Encoding.UTF8, "application/json") };
 
     private static string PullJson(int number, string login = "human", string type = "User",
-        bool draft = false, string state = "open", string created = "2026-10-01T00:00:00Z") =>
+        bool draft = false, string state = "open", string created = "2026-10-01T00:00:00Z",
+        string updated = "2026-10-15T00:00:00Z") =>
         JsonSerializer.Serialize(new
         {
             number,
             user = new { login, type },
             created_at = created,
-            updated_at = "2026-10-15T00:00:00Z",
+            updated_at = updated,
             state,
             draft,
             merged_at = (string?)null,
