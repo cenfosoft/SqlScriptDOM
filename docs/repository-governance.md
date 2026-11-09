@@ -53,9 +53,16 @@ completed. This change normalizes GitHub runner labels and adds regression
 coverage. PR #15 still needs a fresh check run before its failure can be
 considered resolved.
 
-The new change's own required checks and a human peer review must pass before
-it can be merged. The recorded branch protection enforces that gate; this
-document does not claim that a review or approval has already occurred.
+PR #16 is open at head SHA
+`20225bd3301aa7ee6c70fa45410976ee70cfcc05`. All five required checks passed:
+the Windows and Ubuntu foundation jobs, the Windows and Ubuntu build-and-test
+jobs, and static analysis. The test jobs completed successfully on both
+platforms. The PR has no submitted reviews and GitHub reports it as blocked;
+the required human approval has not occurred. The [PR #16 Actions run](https://github.com/cenfosoft/SqlScriptDOM/actions/runs/42573430288)
+records those check results.
+
+The recorded branch protection enforces the review gate. Passing CI does not
+substitute for a human peer review or approval.
 
 ## Protected Actions environment: outstanding
 
@@ -76,5 +83,7 @@ acceptance items, not evidence that can be supplied by a code change alone.
 - [HU-06: Repository governance and peer reviews](https://github.com/cenfosoft/SqlScriptDOM/issues/13)
 - [PR #15](https://github.com/cenfosoft/SqlScriptDOM/pull/15)
 - [PR #15 static-analysis run](https://github.com/cenfosoft/SqlScriptDOM/actions/runs/42565158519)
+- [PR #16](https://github.com/cenfosoft/SqlScriptDOM/pull/16)
+- [PR #16 required-check run](https://github.com/cenfosoft/SqlScriptDOM/actions/runs/42573430288)
 - [Phase 1 workflow](architecture/phase-1-workflow.mmd)
 - [C4 architecture model](architecture/workspace.dsl)

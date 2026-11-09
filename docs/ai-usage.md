@@ -54,8 +54,8 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
 ```
 
 The commit message is the authoritative evidence; verify with
-`git show -s --format=%B <commit>`. The following existing commits were checked
-in local history and contain the trailer:
+`git show -s --format=%B <commit>`. The following implementation and
+CI-correction commits were checked in local history and contain the trailer:
 
 | Commit | Subject |
 |---|---|
@@ -65,6 +65,10 @@ in local history and contain the trailer:
 | [`9637918`](https://github.com/cenfosoft/SqlScriptDOM/commit/9637918) | feat: ingest bounded SHA-bound CI evidence safely |
 | [`047ef81`](https://github.com/cenfosoft/SqlScriptDOM/commit/047ef81) | feat: orchestrate durable report-only review cycles and publication |
 | [`abec65e`](https://github.com/cenfosoft/SqlScriptDOM/commit/abec65e) | feat: add trusted preparation-only Actions entry point |
+| [`3153a0b`](https://github.com/cenfosoft/SqlScriptDOM/commit/3153a0b) | feat: add HU-05 metrics and HU-06 governance |
+| [`20225bd`](https://github.com/cenfosoft/SqlScriptDOM/commit/20225bd) | fix: accept static-analysis evidence manifests |
 
-The HU-05/HU-06 commit is subject to the same trailer requirement and is verified
-after creation; this document does not guess its commit identifier.
+This table lists the HU-05/HU-06 implementation commits and representative
+prior work. Verify every commit in the pull-request history, including later
+documentation updates, with `git log --format="%h %s%n%b"`; do not infer trailer
+presence from this inventory alone.
