@@ -27,23 +27,58 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
+      - name: Initialize test evidence
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}/test-results" | Out-Null
+      - name: Build evidence manifest CLI
+        id: manifest-cli
+        shell: pwsh
+        run: |
+          $log = Join-Path "${{ runner.temp }}" "test-results/evidence-cli-build.log"
+          dotnet build adversarial-review/src/AdversarialReview.Cli/AdversarialReview.Cli.csproj -c Debug -f net8.0 *> $log
+          $exitCode = $LASTEXITCODE
+          Get-Content -Path $log
+          if ($exitCode -ne 0) { exit $exitCode }
       - name: Disable strong name validation
+        id: strong-name
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           .\disableStrongName.ps1
 
       - name: Build ScriptDOM on .NET 8
-        run: dotnet build SqlScriptDom/Microsoft.SqlServer.TransactSql.ScriptDom.csproj -c Debug -f net8.0
+        id: scriptdom-build
+        shell: pwsh
+        run: |
+          $log = Join-Path "${{ runner.temp }}" "test-results/scriptdom-build.log"
+          dotnet build SqlScriptDom/Microsoft.SqlServer.TransactSql.ScriptDom.csproj -c Debug -f net8.0 *> $log
+          $exitCode = $LASTEXITCODE
+          Get-Content -Path $log
+          if ($exitCode -ne 0) { exit $exitCode }
 
       - name: Build the SqlDom test assembly on .NET 8
-        run: dotnet build Test/SqlDom/UTSqlScriptDom.csproj -c Debug -f net8.0
+        id: tests-build
+        shell: pwsh
+        run: |
+          $log = Join-Path "${{ runner.temp }}" "test-results/ut-scriptdom-build.log"
+          dotnet build Test/SqlDom/UTSqlScriptDom.csproj -c Debug -f net8.0 *> $log
+          $exitCode = $LASTEXITCODE
+          Get-Content -Path $log
+          if ($exitCode -ne 0) { exit $exitCode }
 
       - name: Run the complete SqlDom unit-test suite
         id: tests
-        run: dotnet test Test/SqlDom/UTSqlScriptDom.csproj -c Debug -f net8.0 --no-build --logger "trx;LogFileName=ut-scriptdom-${{ matrix.os }}.trx" --results-directory "${{ runner.temp }}/test-results"
+        shell: pwsh
+        run: |
+          $log = Join-Path "${{ runner.temp }}" "test-results/ut-scriptdom-test.log"
+          dotnet test Test/SqlDom/UTSqlScriptDom.csproj -c Debug -f net8.0 --no-build --logger "trx;LogFileName=ut-scriptdom-${{ matrix.os }}.trx" --results-directory "${{ runner.temp }}/test-results" *> $log
+          $exitCode = $LASTEXITCODE
+          Get-Content -Path $log
+          if ($exitCode -ne 0) { exit $exitCode }
 
       - name: Require all 1,176 tests to pass
+        id: test-count
         if: ${{ always() && steps.tests.outcome == 'success' }}
         shell: pwsh
         run: |
@@ -64,18 +99,56 @@ jobs:
             throw "The complete SqlDom suite must report exactly 1,176 passed tests, with no failures or skipped tests."
           }
 
-      - name: Record test evidence SHA
+      - name: Record trusted test-run metadata
         if: always()
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}/test-results" | Out-Null
-          "commit=${{ github.event.pull_request.head.sha }}" | Set-Content -Path "${{ runner.temp }}/test-results/commit.txt"
+          $testOutcome = '${{ steps.tests.outcome }}'
+          $countOutcome = '${{ steps.test-count.outcome }}'
+          if ($testOutcome -eq 'success' -and $countOutcome -eq 'success') {
+            $conclusion = 'passed'
+          } elseif ($testOutcome -eq 'cancelled' -or $countOutcome -eq 'cancelled') {
+            $conclusion = 'cancelled'
+          } elseif ($testOutcome -eq 'skipped') {
+            $conclusion = 'missing'
+          } else {
+            $conclusion = 'failed'
+          }
+          [ordered]@{
+            repository = '${{ github.repository }}'
+            repositoryId = '${{ github.repository_id }}'
+            pullRequest = [int]'${{ github.event.pull_request.number }}'
+            headSha = '${{ github.event.pull_request.head.sha }}'
+            runId = '${{ github.run_id }}'
+            runAttempt = '${{ github.run_attempt }}'
+            platform = '${{ matrix.os }}'
+            strongNameOutcome = '${{ steps.strong-name.outcome }}'
+            scriptDomBuildOutcome = '${{ steps.scriptdom-build.outcome }}'
+            testAssemblyBuildOutcome = '${{ steps.tests-build.outcome }}'
+            manifestCliBuildOutcome = '${{ steps.manifest-cli.outcome }}'
+            testOutcome = $testOutcome
+            testCountOutcome = $countOutcome
+            conclusion = $conclusion
+          } | ConvertTo-Json | Set-Content -Path "${{ runner.temp }}/test-results/run-metadata.json"
+
+      - name: Create SHA-bound test evidence manifest
+        if: always()
+        shell: pwsh
+        run: |
+          $platform = if ('${{ matrix.os }}' -eq 'windows-latest') { 'windows' } else { 'ubuntu' }
+          $metadata = Get-Content -Path "${{ runner.temp }}/test-results/run-metadata.json" -Raw | ConvertFrom-Json
+          dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- manifest `
+            "${{ runner.temp }}/test-results" `
+            "test" `
+            $platform `
+            $metadata.conclusion
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ut-scriptdom-${{ matrix.os }}-${{ github.event.pull_request.head.sha }}
+          name: ut-scriptdom-${{ github.repository_id }}-pr${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}-${{ matrix.os }}
           path: ${{ runner.temp }}/test-results/
           if-no-files-found: warn
 
@@ -90,12 +163,25 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
+      - name: Initialize static-analysis evidence
+        shell: bash
+        run: mkdir -p "$RUNNER_TEMP/static-analysis"
+
+      - name: Build evidence manifest CLI
+        shell: bash
+        run: |
+          if ! dotnet build adversarial-review/src/AdversarialReview.Cli/AdversarialReview.Cli.csproj \
+            -c Debug -f net8.0 \
+            > "$RUNNER_TEMP/static-analysis/evidence-cli-build.log" 2>&1; then
+            cat "$RUNNER_TEMP/static-analysis/evidence-cli-build.log"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/static-analysis/evidence-cli-build.log"
 
       - name: Run scoped Roslyn NetAnalyzers
         id: roslyn
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/static-analysis"
           if ! dotnet build SqlScriptDom/Microsoft.SqlServer.TransactSql.ScriptDom.csproj \
             -c Debug -f net8.0 \
             -p:EnableNETAnalyzers=true \
@@ -110,21 +196,62 @@ jobs:
           printf 'commit=%s\n' '${{ github.event.pull_request.head.sha }}' > "$RUNNER_TEMP/static-analysis/commit.txt"
 
       - name: Install pinned Semgrep
+        id: semgrep-install
         shell: bash
         run: |
           python3 -m venv "$RUNNER_TEMP/semgrep-venv"
-          "$RUNNER_TEMP/semgrep-venv/bin/python" -m pip install --disable-pip-version-check semgrep==1.184.0
+          "$RUNNER_TEMP/semgrep-venv/bin/python" -m pip install --disable-pip-version-check semgrep==1.184.0 \
+            > "$RUNNER_TEMP/static-analysis/semgrep-install.log" 2>&1
+          cat "$RUNNER_TEMP/static-analysis/semgrep-install.log"
 
       - name: Run Semgrep rules
         id: semgrep
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/static-analysis"
-          "$RUNNER_TEMP/semgrep-venv/bin/semgrep" scan \
+          if ! "$RUNNER_TEMP/semgrep-venv/bin/semgrep" scan \
             --config .semgrep.yml \
             --sarif \
             --output "$RUNNER_TEMP/static-analysis/semgrep.sarif" \
-            --error
+            --error \
+            > "$RUNNER_TEMP/static-analysis/semgrep.log" 2>&1; then
+            cat "$RUNNER_TEMP/static-analysis/semgrep.log"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/static-analysis/semgrep.log"
+
+      - name: Record static-analysis outcomes
+        if: always()
+        shell: bash
+        run: |
+          printf 'roslyn=%s\nsemgrepInstall=%s\nsemgrep=%s\n' \
+            '${{ steps.roslyn.outcome }}' \
+            '${{ steps.semgrep-install.outcome }}' \
+            '${{ steps.semgrep.outcome }}' \
+            > "$RUNNER_TEMP/static-analysis/outcomes.txt"
+
+      - name: Create SHA-bound static-analysis evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          roslyn='${{ steps.roslyn.outcome }}'
+          semgrep_install='${{ steps.semgrep-install.outcome }}'
+          semgrep='${{ steps.semgrep.outcome }}'
+          if [[ "$roslyn" == success && "$semgrep_install" == success && "$semgrep" == success ]]; then
+            conclusion=passed
+          elif [[ "$roslyn" == failure || "$semgrep_install" == failure || "$semgrep" == failure ]]; then
+            conclusion=failed
+          elif [[ "$roslyn" == cancelled || "$semgrep_install" == cancelled || "$semgrep" == cancelled ]]; then
+            conclusion=cancelled
+          elif [[ "$roslyn" == skipped || "$semgrep_install" == skipped || "$semgrep" == skipped ]]; then
+            conclusion=missing
+          else
+            conclusion=failed
+          fi
+          dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- manifest \
+            "$RUNNER_TEMP/static-analysis" \
+            "static-analysis" \
+            "ubuntu-latest" \
+            "$conclusion"
 
       - name: Publish static-analysis summary
         if: always()
@@ -135,14 +262,16 @@ jobs:
             echo
             echo "- Commit: \`${{ github.event.pull_request.head.sha }}\`"
             echo "- Roslyn NetAnalyzers: ${{ steps.roslyn.outcome }}"
+            echo "- Semgrep installation: ${{ steps.semgrep-install.outcome }}"
             echo "- Semgrep: ${{ steps.semgrep.outcome }}"
-            echo "- Detailed Roslyn and Semgrep SARIF reports are attached as the \`static-analysis-${{ github.event.pull_request.head.sha }}\` artifact."
+            echo "- Run: \`${{ github.run_id }}\`, attempt \`${{ github.run_attempt }}\`"
+            echo "- Detailed logs, SARIF, and the SHA-bound manifest are attached as the \`static-analysis-${{ github.repository_id }}-pr${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}\` artifact."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload static-analysis reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: static-analysis-${{ github.event.pull_request.head.sha }}
+          name: static-analysis-${{ github.repository_id }}-pr${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/static-analysis/
           if-no-files-found: warn

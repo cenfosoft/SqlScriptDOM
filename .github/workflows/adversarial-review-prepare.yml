@@ -32,16 +32,53 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
+      - name: Initialize preparation evidence
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}/adversarial-preparation" | Out-Null
       - name: Build trusted preparation CLI
-        run: dotnet build adversarial-review/src/AdversarialReview.Cli/AdversarialReview.Cli.csproj -c Debug -f net8.0
+        shell: pwsh
+        run: |
+          $log = Join-Path "${{ runner.temp }}" "adversarial-preparation/cli-build.log"
+          dotnet build adversarial-review/src/AdversarialReview.Cli/AdversarialReview.Cli.csproj -c Debug -f net8.0 *> $log
+          $exitCode = $LASTEXITCODE
+          Get-Content -Path $log
+          if ($exitCode -ne 0) { exit $exitCode }
       - name: Prepare advisory evidence report without inference
+        id: prepare
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- prepare-review adversarial-review/config/review.json "${{ runner.temp }}/adversarial-preparation"
+        run: |
+          $log = Join-Path "${{ runner.temp }}" "adversarial-preparation/preparation.log"
+          dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- prepare-review adversarial-review/config/review.json "${{ runner.temp }}/adversarial-preparation" *> $log
+          $exitCode = $LASTEXITCODE
+          Get-Content -Path $log
+          if ($exitCode -ne 0) { exit $exitCode }
+      - name: Create SHA-bound preparation evidence manifest
+        if: always()
+        shell: pwsh
+        run: |
+          $preparationOutcome = '${{ steps.prepare.outcome }}'
+          if ($preparationOutcome -eq 'success') {
+            $conclusion = 'passed'
+          } elseif ($preparationOutcome -eq 'cancelled') {
+            $conclusion = 'cancelled'
+          } elseif ($preparationOutcome -eq 'skipped') {
+            $conclusion = 'missing'
+          } else {
+            $conclusion = 'failed'
+          }
+          dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- manifest `
+            "${{ runner.temp }}/adversarial-preparation" `
+            "preparation" `
+            "ubuntu-latest" `
+            $conclusion
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload trusted preparation report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: adversarial-preparation-${{ github.event.pull_request.number }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: adversarial-preparation-${{ github.repository_id }}-pr${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/adversarial-preparation/
           if-no-files-found: warn

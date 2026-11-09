@@ -29,15 +29,32 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
+      - name: Initialize adversarial-review evidence
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}/review-results" | Out-Null
 
       - name: Build offline CLI
-        run: dotnet build adversarial-review/src/AdversarialReview.Cli/AdversarialReview.Cli.csproj -c Debug -f net8.0
+        shell: pwsh
+        run: |
+          $log = Join-Path "${{ runner.temp }}" "review-results/cli-build.log"
+          dotnet build adversarial-review/src/AdversarialReview.Cli/AdversarialReview.Cli.csproj -c Debug -f net8.0 *> $log
+          $exitCode = $LASTEXITCODE
+          Get-Content -Path $log
+          if ($exitCode -ne 0) { exit $exitCode }
 
       - name: Run all adversarial-review unit tests
         id: tests
-        run: dotnet test adversarial-review/tests/AdversarialReview.Tests/AdversarialReview.Tests.csproj -c Debug -f net8.0 --logger "trx;LogFileName=adversarial-review-${{ matrix.os }}.trx" --results-directory "${{ runner.temp }}/review-results"
+        shell: pwsh
+        run: |
+          $log = Join-Path "${{ runner.temp }}" "review-results/adversarial-review-test.log"
+          dotnet test adversarial-review/tests/AdversarialReview.Tests/AdversarialReview.Tests.csproj -c Debug -f net8.0 --logger "trx;LogFileName=adversarial-review-${{ matrix.os }}.trx" --results-directory "${{ runner.temp }}/review-results" *> $log
+          $exitCode = $LASTEXITCODE
+          Get-Content -Path $log
+          if ($exitCode -ne 0) { exit $exitCode }
 
-      - name: Require all 172 adversarial-review tests to pass
+      - name: Require all 173 adversarial-review tests to pass
+        id: test-count
         if: ${{ always() && steps.tests.outcome == 'success' }}
         shell: pwsh
         run: |
@@ -54,24 +71,69 @@ jobs:
           $notExecuted = [int]$counters.notExecuted
           Write-Host "Adversarial-review tests: total=$total passed=$passed failed=$failed notExecuted=$notExecuted"
 
-          if ($total -ne 172 -or $passed -ne 172 -or $failed -ne 0 -or $notExecuted -ne 0) {
-            throw "The complete adversarial-review suite must report exactly 172 passed tests, with no failures or skipped tests."
+          if ($total -ne 173 -or $passed -ne 173 -or $failed -ne 0 -or $notExecuted -ne 0) {
+            throw "The complete adversarial-review suite must report exactly 173 passed tests, with no failures or skipped tests."
           }
 
       - name: Validate disabled configuration
-        run: dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- validate-config adversarial-review/config/review.json
+        id: config
+        shell: pwsh
+        run: |
+          $log = Join-Path "${{ runner.temp }}" "review-results/config-validation.log"
+          dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- validate-config adversarial-review/config/review.json *> $log
+          $exitCode = $LASTEXITCODE
+          Get-Content -Path $log
+          if ($exitCode -ne 0) { exit $exitCode }
 
-      - name: Record test evidence SHA
+      - name: Record trusted workflow-run metadata
         if: always()
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}/review-results" | Out-Null
-          "commit=${{ github.event.pull_request.head.sha || github.sha }}" | Set-Content -Path "${{ runner.temp }}/review-results/commit.txt"
+          $pullRequest = '${{ github.event.pull_request.number }}'
+          if ([string]::IsNullOrWhiteSpace($pullRequest)) { $pullRequest = $null } else { $pullRequest = [int]$pullRequest }
+          $testOutcome = '${{ steps.tests.outcome }}'
+          $countOutcome = '${{ steps.test-count.outcome }}'
+          $configOutcome = '${{ steps.config.outcome }}'
+          if ($testOutcome -eq 'success' -and $countOutcome -eq 'success' -and $configOutcome -eq 'success') {
+            $conclusion = 'passed'
+          } elseif ($testOutcome -eq 'cancelled' -or $countOutcome -eq 'cancelled' -or $configOutcome -eq 'cancelled') {
+            $conclusion = 'cancelled'
+          } elseif ($testOutcome -eq 'skipped') {
+            $conclusion = 'missing'
+          } else {
+            $conclusion = 'failed'
+          }
+          [ordered]@{
+            repository = '${{ github.repository }}'
+            repositoryId = '${{ github.repository_id }}'
+            pullRequest = $pullRequest
+            headSha = '${{ github.event.pull_request.head.sha || github.sha }}'
+            runId = '${{ github.run_id }}'
+            runAttempt = '${{ github.run_attempt }}'
+            event = '${{ github.event_name }}'
+            testOutcome = '${{ steps.tests.outcome }}'
+            testCountOutcome = '${{ steps.test-count.outcome }}'
+            configValidationOutcome = $configOutcome
+            conclusion = $conclusion
+          } | ConvertTo-Json | Set-Content -Path "${{ runner.temp }}/review-results/run-metadata.json"
+
+      - name: Create SHA-bound evidence manifest
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        shell: pwsh
+        run: |
+          $platform = if ('${{ matrix.os }}' -eq 'windows-latest') { 'windows' } else { 'ubuntu' }
+          $metadata = Get-Content -Path "${{ runner.temp }}/review-results/run-metadata.json" -Raw | ConvertFrom-Json
+          dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- manifest `
+            "${{ runner.temp }}/review-results" `
+            "foundation" `
+            $platform `
+            $metadata.conclusion
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload adversarial-review test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: adversarial-review-tests-${{ matrix.os }}-${{ github.event.pull_request.head.sha || github.sha }}
+          name: adversarial-review-tests-${{ github.repository_id }}-pr${{ github.event.pull_request.number || 'main' }}-${{ github.event.pull_request.head.sha || github.sha }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}-${{ matrix.os }}
           path: ${{ runner.temp }}/review-results/
           if-no-files-found: warn
