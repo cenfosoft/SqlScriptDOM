@@ -9,6 +9,31 @@ namespace SqlStudio.Tests.UTSqlScriptDom
 {
     public partial class SqlDomTests
     {
+        [TestMethod]
+        [Priority(0)]
+        [SqlStudioTestCategory(Category.UnitTest)]
+        public void VectorIndexMetricValidationTSql170()
+        {
+            AssertVectorIndexMetricValidation(new TSql170Parser(true));
+        }
+
+        private static void AssertVectorIndexMetricValidation(TSqlParser parser)
+        {
+            parser.Parse(new StringReader("CREATE VECTOR INDEX IX ON dbo.T (V);"), out IList<ParseError> errors);
+            Assert.AreEqual(0, errors.Count, "A bare vector index should parse without WITH.");
+
+            parser.Parse(new StringReader("CREATE VECTOR INDEX IX ON dbo.T (V) WITH (METRIC = 'cosine');"), out errors);
+            Assert.AreEqual(0, errors.Count, "METRIC in WITH should parse.");
+
+            parser.Parse(new StringReader("CREATE VECTOR INDEX IX ON dbo.T (V) WITH (TYPE = 'DiskANN');"), out errors);
+            Assert.AreEqual(1, errors.Count, "WITH without METRIC should fail.");
+            Assert.AreEqual(46144, errors[0].Number);
+
+            parser.Parse(new StringReader("CREATE VECTOR INDEX IX ON dbo.T (V) (METRIC = 'cosine');"), out errors);
+            Assert.IsTrue(errors.Count > 0, "Options without WITH should remain a syntax error.");
+            Assert.AreEqual(46010, errors[0].Number, "The syntax error should not be masked by METRIC validation.");
+        }
+
         // Note: These filenames are case sensitive, make sure they match the checked-in file exactly
         private static readonly ParserTest[] Only170TestInfos =
         {

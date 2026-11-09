@@ -7892,7 +7892,11 @@ WHEN NOT MATCHED BY SOURCE THEN DELETE OUTPUT inserted.*, deleted.*;";
 
             // Missing option value
             ParserTestUtils.ErrorTest170("CREATE VECTOR INDEX IX_Test ON dbo.Documents (VectorData) WITH (METRIC = )",
-                new ParserErrorInfo(73, "SQL46010", ")"));
+                new ParserErrorInfo(73, "SQL46144", "METRIC"));
+
+            // Null is not a distance metric value
+            ParserTestUtils.ErrorTest170("CREATE VECTOR INDEX IX_Test ON dbo.Documents (VectorData) WITH (METRIC = NULL)",
+                new ParserErrorInfo(73, "SQL46144", "METRIC"));
 
             // Empty option value
             ParserTestUtils.ErrorTest170("CREATE VECTOR INDEX IX_Test ON dbo.Documents (VectorData) WITH (METRIC = '')",
@@ -7912,7 +7916,7 @@ WHEN NOT MATCHED BY SOURCE THEN DELETE OUTPUT inserted.*, deleted.*;";
 
             // Metric value without quotes
             ParserTestUtils.ErrorTest170("CREATE VECTOR INDEX IX_Test ON dbo.Documents (VectorData) WITH (METRIC = cosine)",
-                new ParserErrorInfo(73, "SQL46010", "cosine"));
+                new ParserErrorInfo(73, "SQL46144", "METRIC"));
 
             // Type value without quotes
             ParserTestUtils.ErrorTest170("CREATE VECTOR INDEX IX_Test ON dbo.Documents (VectorData) WITH (TYPE = DiskANN)",
@@ -7933,6 +7937,23 @@ WHEN NOT MATCHED BY SOURCE THEN DELETE OUTPUT inserted.*, deleted.*;";
             // Incomplete WITH clause
             ParserTestUtils.ErrorTest170("CREATE VECTOR INDEX IX_Test ON dbo.Documents (VectorData) WITH",
                 new ParserErrorInfo(58, "SQL46010", "WITH"));
+        }
+
+        [TestMethod]
+        [Priority(0)]
+        [SqlStudioTestCategory(Category.UnitTest)]
+        public void TestVectorIndex_MissingDistanceMetric_ShouldAddParseError()
+        {
+            const string sql = "CREATE VECTOR INDEX IX_Test ON dbo.Documents (VectorData)\nWITH (TYPE = 'DiskANN');";
+            TSql170Parser parser = new TSql170Parser(true);
+            TSqlFragment fragment = parser.Parse(new StringReader(sql), out IList<ParseError> errors);
+
+            Assert.IsNotNull(fragment);
+            Assert.AreEqual(1, errors.Count);
+            Assert.AreEqual(46144, errors[0].Number);
+            Assert.AreEqual(2, errors[0].Line);
+            Assert.AreEqual(sql.Substring(sql.LastIndexOf('\n') + 1).IndexOf(';') + 1, errors[0].Column);
+            StringAssert.Contains(errors[0].Message, "METRIC");
         }
 
         /// <summary>

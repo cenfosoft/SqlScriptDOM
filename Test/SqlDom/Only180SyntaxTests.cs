@@ -9,6 +9,14 @@ namespace SqlStudio.Tests.UTSqlScriptDom
 {
     public partial class SqlDomTests
     {
+        [TestMethod]
+        [Priority(0)]
+        [SqlStudioTestCategory(Category.UnitTest)]
+        public void VectorIndexMetricValidationTSql180()
+        {
+            AssertVectorIndexMetricValidation(new TSql180Parser(true));
+        }
+
         // Note: These filenames are case sensitive, make sure they match the checked-in file exactly
         private static readonly ParserTest[] Only180TestInfos =
         {

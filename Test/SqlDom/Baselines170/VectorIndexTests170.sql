@@ -11,13 +11,13 @@ CREATE VECTOR INDEX IX_Vector_Euclidean
     ON dbo.Documents (VectorData) WITH (METRIC = 'EUCLIDEAN');
 
 CREATE VECTOR INDEX IX_Vector_DiskANN
-    ON dbo.Documents (VectorData) WITH (TYPE = 'DISKANN');
+    ON dbo.Documents (VectorData) WITH (METRIC = 'COSINE', TYPE = 'DISKANN');
 
 CREATE VECTOR INDEX IX_Vector_Complete
     ON dbo.Documents (VectorData) WITH (METRIC = 'COSINE', TYPE = 'DISKANN');
 
 CREATE VECTOR INDEX IX_Vector_MaxDop
-    ON dbo.Documents (VectorData) WITH (MAXDOP = 4);
+    ON dbo.Documents (VectorData) WITH (METRIC = 'COSINE', MAXDOP = 4);
 
 CREATE VECTOR INDEX IX_Vector_AllOptions
     ON dbo.Documents (VectorData) WITH (METRIC = 'DOT', TYPE = 'DISKANN', MAXDOP = 8);
