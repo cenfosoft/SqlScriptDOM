@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:scriptdom:adversarial-review:review-context:1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "headSha", "configurationSha", "trustedGuidance", "untrustedData"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "headSha": { "$ref": "urn:scriptdom:adversarial-review:contracts:1.0#/$defs/sha" },
+    "configurationSha": { "$ref": "urn:scriptdom:adversarial-review:contracts:1.0#/$defs/sha" },
+    "trustedGuidance": { "type": "string", "minLength": 1 },
+    "untrustedData": {
+      "type": "object", "additionalProperties": false,
+      "required": ["diff", "files", "checks", "artifacts"],
+      "properties": {
+        "diff": { "type": "string" },
+        "files": {
+          "type": "array", "maxItems": 1000,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["path", "lineCount"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "lineCount": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "checks": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "artifacts": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+      }
+    }
+  }
+}

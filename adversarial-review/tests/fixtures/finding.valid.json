@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "id": "parser-version-gate",
+  "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "source": "reviewer",
+  "category": "version-compatibility",
+  "severity": "high",
+  "confidence": 0.9,
+  "title": "Missing version gate",
+  "description": "A synthetic fixture describing an observed missing version check.",
+  "evidence": [
+    {
+      "kind": "file",
+      "reference": "SqlScriptDom/Parser/TSql/Example.cs",
+      "detail": "Synthetic evidence, not a finding against the repository.",
+      "startLine": 10,
+      "endLine": 12
+    }
+  ],
+  "recommendation": "Add version-specific validation and regression coverage.",
+  "disposition": "unreviewed"
+}
