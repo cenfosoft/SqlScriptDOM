@@ -11,20 +11,72 @@ internal static class ReviewCommand
     {
         try
         {
-            if (args.Length is >= 4 and <= 6 && args[0] == "baseline")
+            if (args.Length >= 7 && args[0] == "baseline")
             {
-                int months = args.Length > 4 ? int.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture) : 6;
-                int maxPages = args.Length > 5 ? int.Parse(args[5], System.Globalization.CultureInfo.InvariantCulture) : 100;
+                if (!int.TryParse(args[1], System.Globalization.NumberStyles.None,
+                        System.Globalization.CultureInfo.InvariantCulture, out int months)
+                    || months is < 1 or > 1200)
+                    throw new ContractException("Window months must be an integer from 1 through 1200.");
+                if (!int.TryParse(args[2], System.Globalization.NumberStyles.None,
+                        System.Globalization.CultureInfo.InvariantCulture, out int maxPages)
+                    || maxPages is < 1 or > 1000)
+                    throw new ContractException("Maximum pages must be an integer from 1 through 1000.");
+
+                if (args[3] != "phase1-human-nondraft-merged-only")
+                    throw new ContractException("Use the approved filter profile 'phase1-human-nondraft-merged-only'.");
+                string jsonPath = Path.GetFullPath(args[4]);
+                string markdownPath = Path.GetFullPath(args[5]);
+                if (string.Equals(jsonPath, markdownPath, StringComparison.OrdinalIgnoreCase))
+                    throw new ContractException("JSON and Markdown outputs must use different paths.");
+                string[] repositories = args[6..].Select(ParseRepository).ToArray();
+                if (repositories.Distinct(StringComparer.OrdinalIgnoreCase).Count() != repositories.Length)
+                    throw new ContractException("Repository sources must not contain duplicates.");
+                if (!repositories.Contains("cenfosoft/SqlScriptDOM", StringComparer.OrdinalIgnoreCase)
+                    || !repositories.Contains("microsoft/SqlScriptDOM", StringComparer.OrdinalIgnoreCase))
+                    throw new ContractException("Include both cenfosoft/SqlScriptDOM and microsoft/SqlScriptDOM as read-only sources.");
+
                 string? token = Environment.GetEnvironmentVariable("GH_TOKEN");
                 if (string.IsNullOrWhiteSpace(token))
                     throw new ContractException("Baseline collection requires GH_TOKEN; never pass tokens as CLI arguments.");
                 using HttpClient http = new() { Timeout = TimeSpan.FromSeconds(30) };
                 using CancellationTokenSource cancellation = new(TimeSpan.FromMinutes(10));
                 var client = new GitHubBaselineClient(http, token, maxPages: maxPages);
-                var report = await new BaselineCollector(client).CollectAsync(args[1], args[2], months, cancellation.Token);
-                await WriteNewFileAsync(args[3], JsonSerializer.Serialize(report, Contracts.JsonOptions));
-                Console.WriteLine($"Baseline written; completeness: {report.IsComplete}. Inspect diagnostics before using the dataset.");
-                return report.IsComplete ? 0 : 3;
+                var collector = new BaselineCollector(client);
+                var reports = new List<BaselineReport>(repositories.Length);
+                foreach (string repository in repositories)
+                {
+                    string[] parts = repository.Split('/');
+                    reports.Add(await collector.CollectAsync(parts[0], parts[1], months, cancellation.Token));
+                }
+
+                var report = new BaselineCollectionReport(
+                    "1.0",
+                    DateTimeOffset.UtcNow,
+                    months,
+                    maxPages,
+                    "phase1-human-nondraft-merged-only",
+                    "First ready-for-review event; PR creation time only when the complete timeline shows it was initially non-draft.",
+                    "GitHub merged_at timestamp. Closed PRs without a merge are excluded, not treated as completed integrations.",
+                    "UTC",
+                    [
+                        "Only human-authored PRs (GitHub author type User and login not ending in [bot]).",
+                        "Exclude missing/unknown author identity; malformed author or PR state makes the collection incomplete.",
+                        "Exclude PRs that are drafts at extraction time.",
+                        "Exclude closed PRs without merged_at.",
+                        "Include human-authored dependency and documentation PRs; no topic or label exclusions are applied.",
+                        "Use the start event, not PR creation date, to select the inclusive trailing-calendar-month window.",
+                        "Require a complete, valid timeline; incomplete, malformed, or ambiguous readiness history is excluded and diagnosed.",
+                        "Report open non-draft human PRs as a separate right-censored cohort through each repository's extraction timestamp.",
+                        "Deduplicate by PR number; duplicates and inconsistent states make the collection incomplete.",
+                        "Current-state API snapshot; it does not reconstruct historical draft/closed/reopened states."
+                    ],
+                    reports);
+                string json = JsonSerializer.Serialize(report, Contracts.JsonOptions);
+                string markdown = BaselineMarkdownRenderer.Render(report);
+                await WriteBaselineOutputsAsync(jsonPath, json, markdownPath, markdown);
+                bool complete = reports.All(item => item.IsComplete);
+                Console.WriteLine($"Baseline JSON and Markdown written for {reports.Count} sources; all collections complete: {complete}. Inspect exclusions and diagnostics before use.");
+                return complete ? 0 : 3;
             }
             switch (args)
             {
@@ -105,7 +157,7 @@ internal static class ReviewCommand
                     Console.WriteLine("SHA-bound evidence manifest written. Authenticity still requires trusted GitHub metadata verification.");
                     return 0;
                 default:
-                    Console.Error.WriteLine("Usage: prepare-review <config.json> <output-directory> | list-models | validate-config <path> | validate <schema-name> <path> | render <audit.json> <output.md> | baseline <owner> <repo> <output.json> [months] [max-pages] | manifest <directory> <check> <platform> <conclusion>");
+                    Console.Error.WriteLine("Usage: prepare-review <config.json> <output-directory> | list-models | validate-config <path> | validate <schema-name> <path> | render <audit.json> <output.md> | baseline <months> <max-pages> phase1-human-nondraft-merged-only <output.json> <output.md> <owner/repo> <owner/repo> [additional owner/repo ...] | manifest <directory> <check> <platform> <conclusion>");
                     return 2;
             }
         }
@@ -162,6 +214,35 @@ internal static class ReviewCommand
         await using FileStream stream = new(path, FileMode.CreateNew, FileAccess.Write);
         await using StreamWriter writer = new(stream);
         await writer.WriteAsync(content);
+    }
+
+    private static string ParseRepository(string value)
+    {
+        string[] parts = value.Split('/');
+        if (parts.Length != 2 || parts.Any(string.IsNullOrWhiteSpace))
+            throw new ContractException($"Invalid repository source '{value}'; use owner/repository.");
+        return $"{parts[0]}/{parts[1]}";
+    }
+
+    private static async Task WriteBaselineOutputsAsync(
+        string jsonPath, string json, string markdownPath, string markdown)
+    {
+        if (File.Exists(jsonPath) || File.Exists(markdownPath))
+            throw new IOException("A baseline output file already exists; choose new output paths.");
+
+        string? createdJson = null;
+        try
+        {
+            await WriteNewFileAsync(jsonPath, json);
+            createdJson = jsonPath;
+            await WriteNewFileAsync(markdownPath, markdown);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            if (createdJson is not null)
+                File.Delete(createdJson);
+            throw;
+        }
     }
 
     private static EvidenceIdentity ReadGitHubIdentity()
