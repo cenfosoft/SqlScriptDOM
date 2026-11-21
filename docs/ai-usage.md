@@ -68,6 +68,7 @@ CI-correction commits were checked in local history and contain the trailer:
 | [`abec65e`](https://github.com/cenfosoft/SqlScriptDOM/commit/abec65e) | feat: add trusted preparation-only Actions entry point |
 | [`3153a0b`](https://github.com/cenfosoft/SqlScriptDOM/commit/3153a0b) | feat: add HU-05 metrics and HU-06 governance |
 | [`20225bd`](https://github.com/cenfosoft/SqlScriptDOM/commit/20225bd) | fix: accept static-analysis evidence manifests |
+| [`3deddce`](https://github.com/cenfosoft/SqlScriptDOM/commit/3deddced6028bf10b0cc06c6ddea76a60257563b) | fix: secure upstream metrics and align validation gates |
 
 This table lists the HU-05/HU-06 implementation commits and representative
 prior work. Integration merge commits are not a substitute for the original
