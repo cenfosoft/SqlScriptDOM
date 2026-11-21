@@ -16,7 +16,8 @@ public interface IReviewProvider
 
 public sealed record CycleClaim(
     string Repository, int PullRequest, string HeadSha, string AuthorizationId,
-    decimal MaximumCostUsd, decimal MonthlyLimitUsd, int MaximumRounds);
+    decimal MaximumCostUsd, decimal MonthlyLimitUsd, int MaximumRounds,
+    string AuthorizedActor, string AuthorizationLabel);
 
 public interface IReviewSpendLedger
 {
@@ -28,6 +29,9 @@ public interface IReviewSpendLedger
 
     // An unsuccessful/unknown request retains its full reservation for reconciliation.
     Task RecordAsync(CycleClaim claim, ReviewRound round, CancellationToken cancellationToken);
+
+    // Final status is persisted with the authorization and SHA for auditability.
+    Task RecordFinalStatusAsync(CycleClaim claim, string status, CancellationToken cancellationToken);
 }
 
 public sealed record CycleResult(AuditReport Report, string[] Diagnostics);
@@ -67,91 +71,127 @@ public sealed class ReviewCycle(IReviewProvider provider, IReviewSpendLedger led
 
         int rounds = configuration.Rounds!.Value;
         var claim = new CycleClaim(run.Repository, run.PullRequest, run.HeadSha, run.AuthorizationId,
-            configuration.Limits.PerAuthorizationUsd!.Value, configuration.Limits.MonthlyUsd!.Value, rounds);
+            configuration.Limits.PerAuthorizationUsd!.Value, configuration.Limits.MonthlyUsd!.Value, rounds,
+            authorization.Actor, authorization.Label);
         await ledger.ClaimAsync(claim, cancellationToken);
         List<ReviewRound> completed = [];
         List<string> diagnostics = [];
         Dictionary<string, Finding> findings = new(StringComparer.Ordinal);
         decimal spent = 0;
+        long inputTokensUsed = 0;
+        long outputTokensUsed = 0;
 
-        for (int index = 0; index < rounds; index++)
+        AuditReport report;
+        try
         {
-            state = await readCurrentState(cancellationToken);
-            if (!state.IsOpen || state.IsDraft || state.HeadSha != run.HeadSha)
+            for (int index = 0; index < rounds; index++)
             {
-                diagnostics.Add("PR state changed; no further model calls were made.");
-                break;
-            }
-            DateTimeOffset expires = await ledger.EnsureActiveAsync(claim, cancellationToken);
-            TimeSpan leaseRemaining = expires - (timeProvider ?? TimeProvider.System).GetUtcNow();
-            if (leaseRemaining <= TimeSpan.Zero)
-            {
-                diagnostics.Add("Spend reservation expired; no further provider calls were made.");
-                break;
-            }
-            ModelSelection selection = ModelRotation.Select(configuration, run.HeadSha, run.HeadSha,
-                Renumber([.. priorHistory, .. completed]), provider.IsAvailable);
-            decimal remaining = claim.MaximumCostUsd - spent;
-            if (remaining <= 0)
-            {
-                diagnostics.Add("Per-authorization budget exhausted; no further model calls were made.");
-                break;
-            }
-            string requestId = $"{run.AuthorizationId}:{index + 1}";
-            ModelRequest request = new(selection.Entry, boundedContext, configuration.Limits.MaxInputTokens!.Value,
-                configuration.Limits.MaxOutputTokens!.Value, requestId, remaining);
-            ReviewRound result;
-            Finding[] accepted = [];
-            using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            TimeSpan configuredTimeout = TimeSpan.FromSeconds(configuration.Limits.TimeoutSeconds!.Value);
-            timeout.CancelAfter(leaseRemaining < configuredTimeout ? leaseRemaining : configuredTimeout);
-            try
-            {
-                ModelResponse response = await provider.ReviewAsync(request, timeout.Token).WaitAsync(timeout.Token);
-                if (response.InputTokens < 0 || response.OutputTokens < 0
-                    || response.InputTokens > request.MaxInputTokens || response.OutputTokens > request.MaxOutputTokens
-                    || response.LatencyMilliseconds < 0 || response.CostUsd < 0 || response.CostUsd > remaining)
-                    throw new ContractException("Provider usage is invalid or exceeds the reserved limits.");
-                result = Round(index, selection, response, "completed");
+                state = await readCurrentState(cancellationToken);
+                if (!state.IsOpen || state.IsDraft || state.HeadSha != run.HeadSha)
+                {
+                    diagnostics.Add("PR state changed; no further model calls were made.");
+                    break;
+                }
+                DateTimeOffset expires = await ledger.EnsureActiveAsync(claim, cancellationToken);
+                TimeSpan leaseRemaining = expires - (timeProvider ?? TimeProvider.System).GetUtcNow();
+                if (leaseRemaining <= TimeSpan.Zero)
+                {
+                    diagnostics.Add("Spend reservation expired; no further provider calls were made.");
+                    break;
+                }
+                ModelSelection selection = ModelRotation.Select(configuration, run.HeadSha, run.HeadSha,
+                    Renumber([.. priorHistory, .. completed]), provider.IsAvailable);
+                decimal remaining = claim.MaximumCostUsd - spent;
+                if (remaining <= 0)
+                {
+                    diagnostics.Add("Per-authorization budget exhausted; no further model calls were made.");
+                    break;
+                }
+                int remainingInputTokens = checked((int)(configuration.Limits.MaxInputTokens!.Value - inputTokensUsed));
+                int remainingOutputTokens = checked((int)(configuration.Limits.MaxOutputTokens!.Value - outputTokensUsed));
+                if (remainingInputTokens <= 0 || remainingOutputTokens <= 0)
+                {
+                    diagnostics.Add("Per-PR token budget exhausted; no further model calls were made.");
+                    break;
+                }
+                string requestId = $"{run.AuthorizationId}:{index + 1}";
+                ModelRequest request = new(selection.Entry, boundedContext, remainingInputTokens,
+                    remainingOutputTokens, requestId, remaining);
+                ReviewRound result;
+                Finding[] accepted = [];
+                using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                TimeSpan configuredTimeout = TimeSpan.FromSeconds(configuration.Limits.TimeoutSeconds!.Value);
+                timeout.CancelAfter(leaseRemaining < configuredTimeout ? leaseRemaining : configuredTimeout);
                 try
                 {
-                    accepted = ReviewerOutput.Parse(response.FindingsJson, context, secrets);
-                    if (accepted.Any(f => findings.TryGetValue(f.Id, out Finding? previous)
-                        && Contracts.Write(previous, "finding") != Contracts.Write(f, "finding")))
-                        throw new ContractException("Conflicting findings reuse an identifier.");
+                    ModelResponse response = await provider.ReviewAsync(request, timeout.Token).WaitAsync(timeout.Token);
+                    if (response.InputTokens < 0 || response.OutputTokens < 0
+                        || response.InputTokens > request.MaxInputTokens || response.OutputTokens > request.MaxOutputTokens
+                        || response.LatencyMilliseconds < 0 || response.CostUsd < 0 || response.CostUsd > remaining)
+                        throw new ContractException("Provider usage is invalid or exceeds the reserved limits.");
+                    inputTokensUsed = checked(inputTokensUsed + response.InputTokens);
+                    outputTokensUsed = checked(outputTokensUsed + response.OutputTokens);
+                    result = Round(index, selection, response, "completed");
+                    try
+                    {
+                        accepted = ReviewerOutput.Parse(response.FindingsJson, context, secrets);
+                        if (accepted.Any(f => findings.TryGetValue(f.Id, out Finding? previous)
+                            && Contracts.Write(previous, "finding") != Contracts.Write(f, "finding")))
+                            throw new ContractException("Conflicting findings reuse an identifier.");
+                    }
+                    catch (ContractException)
+                    {
+                        result = result with { Outcome = "malformed" };
+                        accepted = [];
+                        diagnostics.Add("Model output was rejected; response content is not logged.");
+                    }
                 }
-                catch (ContractException)
+                catch (Exception error) when (error is HttpRequestException or OperationCanceledException or ContractException)
                 {
-                    result = result with { Outcome = "malformed" };
-                    accepted = [];
-                    diagnostics.Add("Model output was rejected; response content is not logged.");
+                    result = new(index + 1, selection.Entry.Provider, selection.Entry.Model, selection.Reason,
+                        "1.0", null, null, 0, null, cancellationToken.IsCancellationRequested ? "cancelled" : "failed");
+                    diagnostics.Add("Provider request failed or its usage was invalid; billing may be unknown. No automatic retry.");
                 }
+                // Persist even when the request was cancelled: losing this record risks replay/spend.
+                using CancellationTokenSource settlement = new(TimeSpan.FromSeconds(30));
+                await ledger.RecordAsync(claim, result, settlement.Token);
+                completed.Add(result);
+                if (result.EstimatedCostUsd is decimal cost) spent += cost;
+                foreach (Finding finding in accepted)
+                {
+                    findings.TryAdd(finding.Id, finding);
+                }
+                if (accepted.Any(RequiresHumanReview))
+                {
+                    diagnostics.Add("An unresolved critical/high finding requires human review; no further model calls were made.");
+                    break;
+                }
+                if (result.Outcome != "completed") break;
             }
-            catch (Exception error) when (error is HttpRequestException or OperationCanceledException or ContractException)
-            {
-                result = new(index + 1, selection.Entry.Provider, selection.Entry.Model, selection.Reason,
-                    "1.0", null, null, 0, null, cancellationToken.IsCancellationRequested ? "cancelled" : "failed");
-                diagnostics.Add("Provider request failed or its usage was invalid; billing may be unknown. No automatic retry.");
-            }
-            // Persist even when the request was cancelled: losing this record risks replay/spend.
-            using CancellationTokenSource settlement = new(TimeSpan.FromSeconds(30));
-            await ledger.RecordAsync(claim, result, settlement.Token);
-            completed.Add(result);
-            if (result.EstimatedCostUsd is decimal cost) spent += cost;
-            foreach (Finding finding in accepted)
-            {
-                findings.TryAdd(finding.Id, finding);
-            }
-            if (result.Outcome != "completed") break;
+
+            using CancellationTokenSource finalRead = new(TimeSpan.FromSeconds(30));
+            state = await readCurrentState(finalRead.Token);
+            report = AuditEngine.Create(run, state.HeadSha, checks,
+                findings.Values.ToArray(), completed.ToArray(), rounds);
+            if ((!state.IsOpen || state.IsDraft) && report.Status != "stale")
+                report = report with { Status = "incomplete", Blockers = [.. report.Blockers, "PR is now closed or draft."] };
         }
-        using CancellationTokenSource finalRead = new(TimeSpan.FromSeconds(30));
-        state = await readCurrentState(finalRead.Token);
-        AuditReport report = AuditEngine.Create(run, state.HeadSha, checks,
-            findings.Values.ToArray(), completed.ToArray(), rounds);
-        if ((!state.IsOpen || state.IsDraft) && report.Status != "stale")
-            report = report with { Status = "incomplete", Blockers = [.. report.Blockers, "PR is now closed or draft."] };
+        catch (Exception error) when (error is ContractException or HttpRequestException or OperationCanceledException)
+        {
+            using CancellationTokenSource recovery = new(TimeSpan.FromSeconds(30));
+            await ledger.RecordFinalStatusAsync(claim, "human-review-required", recovery.Token);
+            throw;
+        }
+
+        string finalStatus = AuditEngine.RequiresHumanReview(report) ? "human-review-required" : report.Status;
+        using CancellationTokenSource finalStatusToken = new(TimeSpan.FromSeconds(30));
+        await ledger.RecordFinalStatusAsync(claim, finalStatus, finalStatusToken.Token);
         return new(report with { Limitations = [.. report.Limitations, .. diagnostics] }, diagnostics.ToArray());
     }
+
+    private static bool RequiresHumanReview(Finding finding) =>
+        finding.Severity is "critical" or "high"
+        && finding.Disposition is "unreviewed" or "confirmed";
 
     private static ReviewRound[] Renumber(ReviewRound[] history) =>
         history.Select((round, index) => round with { Number = index + 1 }).ToArray();

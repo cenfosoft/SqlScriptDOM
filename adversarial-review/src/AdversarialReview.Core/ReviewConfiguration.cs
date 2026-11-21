@@ -10,6 +10,8 @@ public sealed record ReviewConfiguration(
     string SchemaVersion, bool Enabled, string AuthorizationLabel, string[] AuthorizedActors,
     string Environment, int? Rounds, ReviewLimits Limits, ModelEntry[] Models)
 {
+    public const int MaxRounds = 3;
+
     public static ReviewConfiguration Parse(string json)
     {
         ReviewConfiguration config = Contracts.Read<ReviewConfiguration>(json, "configuration");
@@ -24,7 +26,7 @@ public sealed record ReviewConfiguration(
     {
         List<string> errors = [];
         if (!Enabled) errors.Add("Paid execution is disabled.");
-        if (Rounds is not > 0) errors.Add("Review round limit is unset.");
+        if (Rounds is not > 0 or > MaxRounds) errors.Add($"Review round limit must be between 1 and {MaxRounds}.");
         if (Limits.MaxInputTokens is not > 0 || Limits.MaxOutputTokens is not > 0)
             errors.Add("Token limits are unset.");
         if (Limits.TimeoutSeconds is not > 0 || Limits.MaxRetries is null or < 0)

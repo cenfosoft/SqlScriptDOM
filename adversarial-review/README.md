@@ -98,6 +98,23 @@ forwarded and the runtime attempts a bounded abort; reservations must remain hel
 Session disposal and deletion are attempted after each call. Cleanup failures are
 explicit errors, not successful reviews; the trusted host must inspect/protect any
 remaining private state and enforce its approved retention policy.
+
+The engine enforces at most three rounds per authorization and treats the configured
+input/output token values as aggregate per-cycle budgets: each SDK call receives only
+the remaining allowance. Each round is cancellation-bounded by the configured timeout
+and reservation expiry. An unresolved critical/high finding stops additional calls and
+renders the report status as **Human Review Required**; an attempted but incomplete
+review also escalates. SQLite records the separate `human-review-required` final
+status. The JSON v1.0 report contract remains unchanged, and the advisory status does
+not apply a GitHub label or change the PR's open/closed state. Numeric risk scoring
+remains disabled; no score threshold is inferred.
+
+Before any inference, SQLite atomically consumes the authorization and reserves the
+cycle's full financial maximum against the repository's monthly balance. The durable
+claim records the authorization ID, actor, label, PR, evaluated head SHA, and final
+status; ordered round outcomes and usage are recorded separately. Duplicate
+authorizations fail closed, and unknown billing does not release reserved funds.
+
 The [SDK usage guide](https://github.com/github/copilot-sdk/blob/v1.0.22/docs/features/usage-and-billing.md)
 warns that nano-unit conversion must be checked against current billing documentation.
 No currency conversion or model inference has been validated against live billing.
@@ -114,6 +131,10 @@ oversize documents (over 2 MiB), and excessive nesting (over 32 levels) are reje
 Version `1.0` is intentionally closed: even additive fields require a new contract
 version and explicit consumer support. Never silently downgrade a future version.
 Tests include valid, invalid, and unsupported-version cases.
+For backward compatibility, validation and rendering can read historical `1.0`
+reports marked `complete` that contain unresolved high/critical findings. New report
+writes still reject that combination, and rendering escalates it to **Human Review
+Required** rather than treating the legacy status as clearance.
 
 Findings carry evidence and a disposition, checks carry the evaluated SHA, and review
 metadata carries both the head SHA and trusted configuration revision. JSON Schema
@@ -174,7 +195,10 @@ artifact retention remain required before live operation.
 
 `AuditEngine.Create` binds checks and findings to one run, requires the configured
 round count for a complete report, and lists unresolved high/critical findings.
-Missing checks or rounds produce `incomplete`; a changed head produces `stale`.
+Unresolved high/critical findings or an attempted incomplete model review produce
+`incomplete` in the versioned report (rendered as **Human Review Required** and
+recorded separately in SQLite); a preparation report with no model rounds and missing
+checks/rounds remains `incomplete`. A changed head produces `stale`.
 Complete describes the evidence collection, **not** safety or merge clearance.
 Numeric risk stays `null` until the team approves provisional weights; zero is not
 a substitute for missing evidence.
@@ -429,8 +453,9 @@ and while the PR remains current before each round. The caller still supplies tr
 environment approval, reporting-run identity, provider policy, and deployment storage.
 `PublishStoredAsync` reads a persisted report under the same lock; publication retries
 never re-enter inference. Recoverable cycle errors preserve a sanitized incomplete report
-and available ledger accounting, not a fabricated clean result. Failure to persist is
-an explicit error.
+and available ledger accounting, not a fabricated clean result. Once a claim is
+consumed, interruptions also persist `human-review-required` using a separate bounded
+settlement token. Failure to persist is an explicit error.
 
 `GitHubReviewContext` retrieves bounded textual patches and current Git blobs through
 the API, verifies blob hashes and patch addition/deletion counts, and rechecks PR state.
