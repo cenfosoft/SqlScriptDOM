@@ -31,6 +31,16 @@ public sealed class EvidenceTests
     }
 
     [TestMethod]
+    public void ManifestAcceptsPreparationAndStaticAnalysisChecks()
+    {
+        foreach (string check in new[] { "preparation", "static-analysis" })
+        {
+            var manifest = EvidenceManifest.Create(directory, identity, check, "ubuntu", "passed");
+            Assert.AreEqual(check, manifest.Check);
+        }
+    }
+
+    [TestMethod]
     public void TamperingUnexpectedFilesAndDuplicatePathsAreRejected()
     {
         var manifest = EvidenceManifest.Create(directory, identity, "test", "ubuntu", "passed");

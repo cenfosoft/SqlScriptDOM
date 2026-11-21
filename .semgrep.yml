@@ -1,0 +1,28 @@
+rules:
+  - id: dotnet-security-binaryformatter
+    languages:
+      - csharp
+    message: BinaryFormatter is unsafe for deserializing untrusted data.
+    severity: ERROR
+    metadata:
+      category: security
+      technology:
+        - dotnet
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+    pattern-either:
+      - pattern: new BinaryFormatter(...)
+      - pattern: new System.Runtime.Serialization.Formatters.Binary.BinaryFormatter(...)
+
+  - id: dotnet-security-disabled-tls-validation
+    languages:
+      - csharp
+    message: TLS certificate validation must not be disabled.
+    severity: ERROR
+    metadata:
+      category: security
+      technology:
+        - dotnet
+      cwe:
+        - "CWE-295: Improper Certificate Validation"
+    pattern-regex: 'ServerCertificateCustomValidationCallback\s*=\s*(?:\([^)]*\)|[A-Za-z_]\w*)\s*=>\s*true\b'
