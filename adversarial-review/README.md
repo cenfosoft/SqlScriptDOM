@@ -182,9 +182,18 @@ claim and spend reservation, not eligible to call a model immediately. The SQLit
 implementation below provides these controls for a shared persistent host; hosted
 Actions deployment and trusted event admission are not configured.
 
-The mandatory evidence set currently includes build/test results on both Windows and
-Ubuntu, plus independent Semgrep and Roslyn results. Missing team-supplied analysis
-policies must not be fabricated as successful checks.
+The mandatory evidence set includes build/test results on both Windows and Ubuntu,
+plus independent Semgrep and Roslyn results. Repository-owned Semgrep rules live in
+`.semgrep.yml`; `.editorconfig` scopes Roslyn diagnostics to vector AST helpers and
+their script-generator visitors. These policies are bounded and advisory; they do not
+represent a complete security audit.
+
+The repository `static-analysis` workflow records Semgrep findings as advisory SARIF;
+findings alone do not fail the workflow or claim a clean review. Tool installation,
+scanner/configuration, Roslyn build, and evidence-manifest failures remain explicit
+failures. A successful static-analysis check means the tools ran and evidence was
+recorded, not that no findings exist. Reviewers must inspect the attached SARIF and
+logs before using the results in an advisory assessment.
 
 Never include API keys, request headers, full prompts, or raw provider responses in
 configuration, fixtures, comments, or logs. Structural validation errors deliberately
@@ -221,12 +230,15 @@ dotnet run --project adversarial-review/src/AdversarialReview.Cli -- baseline 6 
 ```
 
 Supply a read-only GitHub API token using `GH_TOKEN`, never a command-line argument.
-The arguments explicitly select the trailing calendar-month window, per-resource
-pagination cap, approved exclusion profile, JSON and Markdown outputs, and one or
-more `owner/repository` sources. The comparison must include both `cenfosoft/SqlScriptDOM` and
-`microsoft/SqlScriptDOM`; both are fetched read-only. Every request has a 30-second
-timeout and the combined collection has a ten-minute cancellation limit. Outputs
-are new files; existing files are not overwritten. No paid model API is used.
+The token is sent only to `cenfosoft/SqlScriptDOM`; Microsoft upstream and any
+additional sources are requested anonymously, so the fork credential is not sent to
+other organizations. All sources must be publicly readable. The arguments explicitly
+select the trailing calendar-month window, per-resource pagination cap, approved
+exclusion profile, JSON and Markdown outputs, and one or more `owner/repository`
+sources. The comparison must include both `cenfosoft/SqlScriptDOM` and
+`microsoft/SqlScriptDOM`. Every request has a 30-second timeout and the combined
+collection has a ten-minute cancellation limit. Outputs are new files; existing
+files are not overwritten. No paid model API is used.
 The command exits with code **3** if either repository is incomplete; inspect
 diagnostics before using or comparing its cohorts.
 
@@ -287,16 +299,18 @@ matrices and build/test commands while publishing raw build logs and TRX results
 including failures where output is available. Drafts are skipped; ready-for-review
 events start validation. [Foundation validation](../.github/workflows/adversarial-review-validation.yml)
 runs the offline tool tests on Windows and Ubuntu, without model credentials or PR
-write permission. Its enforced suite total is 173, up from the 172-test Phase 1
-reference after adding manifest-schema coverage for the preparation and static-analysis
-checks. Artifacts currently use the repository's existing retention setting; the team
-must approve a retention policy before live review.
+write permission. The earlier enforced suite total was 173, up from the 172-test
+Phase 1 reference after adding manifest-schema coverage for the preparation and
+static-analysis checks. The combined HU integration branch adds test cases; its
+current unfiltered suite contains 189 tests, and the workflow enforces that count.
+Artifacts currently use the repository's existing retention setting; the team must
+approve a retention policy before live review.
 
 Trusted consumption must verify workflow provenance and safe archive extraction
-**before** parsing a manifest; checksum validation alone is insufficient. Semgrep
-and Roslyn evidence remain unavailable until team-owned policies are supplied.
-Missing outputs or a failed manifest step are failures/incomplete evidence, never
-successful deterministic checks.
+**before** parsing a manifest; checksum validation alone is insufficient. The
+`static-analysis` workflow now runs the repository-owned Semgrep and scoped Roslyn
+policies and records SHA-bound evidence. Missing outputs or a failed manifest step
+are failures/incomplete evidence, never successful deterministic checks.
 
 ## Bounded reviewer inputs and outputs
 

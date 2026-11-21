@@ -10,7 +10,7 @@ context. A prompt reference is not evidence that a model inference occurred.
 |---|---|---|
 | GitHub Copilot SDK in VS Code | Coding assistant used for the HU-05/HU-06 analysis, implementation, and validation in this session. | The active model identifier is not exposed in the session evidence; no model name is inferred. |
 | GitHub Copilot CLI | Not invoked for this work. | It was named in the requested inventory, but there is no CLI execution evidence. |
-| `gpt5.4-mini` | Candidate named in the request; not verified as selected or invoked in this session. | Treat as a candidate, not an observed model run. |
+| `gpt-5.4-mini` | Configured candidate identifier; not verified as selected or invoked in this session. The original task used the spelling `gpt5.4-mini`. | Treat as a candidate, not an observed model run. |
 | `claude-haiku-4.5` | Candidate named in the request; not verified as selected or invoked in this session. | Treat as a candidate, not an observed model run. |
 | GitHub REST API | Read-only issue, pull request, collaborator, workflow, and check inspection; authorized repository-settings verification and configuration are recorded separately. | No write was made to source repositories during metric collection. |
 
@@ -25,6 +25,7 @@ entitlement must be recorded from runtime evidence before reporting model usage.
 | AI-2026-11-09-01 | HU-05, issue [#12](https://github.com/cenfosoft/SqlScriptDOM/issues/12) | User request in the implementation session: inspect HU-05, complete the C# Lead Time collection and JSON/Markdown report, compare fork and upstream, and record AI usage. The full chat prompt is not copied into the repository. | Metrics code, tests, and runbook changes in `adversarial-review/`; verifiable through the associated branch commit and PR. |
 | AI-2026-11-09-02 | HU-06, issue [#13](https://github.com/cenfosoft/SqlScriptDOM/issues/13) | User request in the same session: inspect HU-06, align repository governance, require human peer review and CI, and add renderable architecture/process diagrams. The full chat prompt is not copied into the repository. | Governance evidence, protected-branch configuration, and diagrams documented in this change; acceptance remains open until the functional checks and team review are verified. |
 | AI-2026-11-09-03 | HU-05 / D-007 | The user was asked to resolve the conflict between the current request's “PR opened” wording and approved decision D-007. The response selected “first ready-for-review → merge,” retaining D-007. | The metric definition and user decision are recorded in `docs/phase-1-progress.md`; open PRs remain separately right-censored. |
+| AI-2026-11-21-01 | HU-05 / integration branch | User request: continue HU-05 from its original specification, complete what can be verified, and record progress in issue [#12](https://github.com/cenfosoft/SqlScriptDOM/issues/12). The full chat prompt is not copied into the repository. | Full .NET 8 runs passed: 1,176 SqlDom tests and 189 adversarial-review tests; the Release CLI build succeeded; the Mermaid flow and Structurizr C4 workspace validated. A complete six-month fork/upstream report was generated locally and is not committed pending retention approval. The .NET Framework 4.7.2 test leg was unavailable because Mono is not installed. No model invocation is inferred from this coding session. |
 | PROMPT-REVIEW | Phase 1 advisory review | Versioned template: [adversarial-review.prompt.md](../.github/prompts/adversarial-review.prompt.md). | The template exists in the repository; its use for a specific model run is not asserted here. |
 | PROMPT-IMPLEMENT | Parser feature implementation | Versioned template: [new-feature-implementation.prompt.md](../.github/prompts/new-feature-implementation.prompt.md). | Available template; not recorded as used for this HU-05/HU-06 change. |
 | PROMPT-VERIFY-TSQL | T-SQL syntax verification | Versioned template: [verify-and-test-tsql-syntax.prompt.md](../.github/prompts/verify-and-test-tsql-syntax.prompt.md). | Available template; not recorded as used for this HU-05/HU-06 change. |
@@ -69,6 +70,8 @@ CI-correction commits were checked in local history and contain the trailer:
 | [`20225bd`](https://github.com/cenfosoft/SqlScriptDOM/commit/20225bd) | fix: accept static-analysis evidence manifests |
 
 This table lists the HU-05/HU-06 implementation commits and representative
-prior work. Verify every commit in the pull-request history, including later
-documentation updates, with `git log --format="%h %s%n%b"`; do not infer trailer
-presence from this inventory alone.
+prior work. Integration merge commits are not a substitute for the original
+commit trailers. New AI-assisted implementation commits on the integration
+branch must include the trailer above; verify commit messages with
+`git log --format="%h %s%n%b"` rather than inferring trailer presence from this
+inventory alone.

@@ -53,7 +53,7 @@ jobs:
           Get-Content -Path $log
           if ($exitCode -ne 0) { exit $exitCode }
 
-      - name: Require all 173 adversarial-review tests to pass
+      - name: Require all 189 adversarial-review tests to pass
         id: test-count
         if: ${{ always() && steps.tests.outcome == 'success' }}
         shell: pwsh
@@ -71,8 +71,8 @@ jobs:
           $notExecuted = [int]$counters.notExecuted
           Write-Host "Adversarial-review tests: total=$total passed=$passed failed=$failed notExecuted=$notExecuted"
 
-          if ($total -ne 173 -or $passed -ne 173 -or $failed -ne 0 -or $notExecuted -ne 0) {
-            throw "The complete adversarial-review suite must report exactly 173 passed tests, with no failures or skipped tests."
+          if ($total -ne 189 -or $passed -ne 189 -or $failed -ne 0 -or $notExecuted -ne 0) {
+            throw "The complete adversarial-review suite must report exactly 189 passed tests, with no failures or skipped tests."
           }
 
       - name: Validate disabled configuration

@@ -65,6 +65,24 @@ public sealed class GitHubBaselineClientTests
     }
 
     [TestMethod]
+    public async Task SupportsUnauthenticatedPublicRepositoryRequests()
+    {
+        int requests = 0;
+        using var http = CreateHttp((request, _) =>
+        {
+            requests++;
+            Assert.IsNull(request.Headers.Authorization);
+            Assert.AreEqual("api.github.com", request.RequestUri!.Host);
+            return Task.FromResult(Json("[]"));
+        });
+
+        RepositorySnapshot snapshot = await Client(http).FetchSnapshotAsync("microsoft", "SqlScriptDOM");
+
+        Assert.AreEqual(1, requests);
+        Assert.IsTrue(snapshot.IsComplete);
+    }
+
+    [TestMethod]
     public async Task DoesNotFetchTimelinesForBotsDraftsOrClosedUnmerged()
     {
         int count = 0;

@@ -24,6 +24,16 @@ These are live repository settings, not merely workflow declarations. The
 required checks correspond to the Windows/Ubuntu foundation and parser
 build/test jobs plus the static-analysis job.
 
+## Static-analysis check behavior
+
+The `static-analysis` status check verifies that the pinned Semgrep scan and
+scoped Roslyn build execute and produce SHA-bound evidence. Semgrep findings are
+reported in SARIF and are advisory: a finding by itself does not fail this job.
+Semgrep installation/scanner/configuration errors, Roslyn build errors, or
+failed evidence-manifest creation still fail the check. A successful status
+means the analysis ran, not that it found no findings. The advisory results may
+inform the reviewer and human decision; they are not an automatic merge gate.
+
 ## Issues and milestones
 
 Issues are enabled. HU-01 through HU-06 (issues #8–#13) were open at inspection,

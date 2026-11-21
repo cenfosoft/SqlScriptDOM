@@ -40,12 +40,14 @@ internal static class ReviewCommand
                     throw new ContractException("Baseline collection requires GH_TOKEN; never pass tokens as CLI arguments.");
                 using HttpClient http = new() { Timeout = TimeSpan.FromSeconds(30) };
                 using CancellationTokenSource cancellation = new(TimeSpan.FromMinutes(10));
-                var client = new GitHubBaselineClient(http, token, maxPages: maxPages);
-                var collector = new BaselineCollector(client);
                 var reports = new List<BaselineReport>(repositories.Length);
                 foreach (string repository in repositories)
                 {
                     string[] parts = repository.Split('/');
+                    string? repositoryToken = string.Equals(repository, "cenfosoft/SqlScriptDOM",
+                        StringComparison.OrdinalIgnoreCase) ? token : null;
+                    // The fork token must not be sent to the public upstream or additional sources.
+                    var collector = new BaselineCollector(new GitHubBaselineClient(http, repositoryToken, maxPages));
                     reports.Add(await collector.CollectAsync(parts[0], parts[1], months, cancellation.Token));
                 }
 

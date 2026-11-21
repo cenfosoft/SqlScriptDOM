@@ -4,8 +4,8 @@
 |---|---|
 | Phase | Phase 1 — Report-Only Foundation |
 | Status | In progress — trusted integration and pilot blocked by outstanding approved inputs |
-| Progress | Admission, bounded evidence ingestion, persistent orchestration/history/publication, and preparation-only workflow implemented; 172 tests pass; paid execution disabled; live deployment/pilot pending |
-| Last updated | October 16, 2026 |
+| Progress | Admission, bounded evidence ingestion, persistent orchestration/history/publication, and preparation-only workflow implemented; 189 adversarial-review tests and 1,176 SqlDom tests pass on .NET 8; paid execution disabled; live deployment/pilot pending |
+| Last updated | November 21, 2026 |
 | Source specification | [Adversarial Reviewer Agent Specification](adversarial-reviewer-agent-spec.md) |
 | Target repository | [cenfosoft/SqlScriptDOM](https://github.com/cenfosoft/SqlScriptDOM) |
 
