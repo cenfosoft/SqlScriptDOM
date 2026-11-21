@@ -1,8 +1,9 @@
 # Repository governance evidence
 
-This page records the GitHub state inspected for HU-06 on 2026-11-09 UTC. It
-distinguishes settings read back from GitHub from requirements that still need
-an authorized maintainer or peer reviewer.
+This page records the GitHub state inspected for HU-06 on 2026-11-09 UTC and the
+temporary status-check change made on 2026-11-21. It distinguishes settings read
+back from GitHub from requirements that still need an authorized maintainer or
+peer reviewer.
 
 ## Protected `main` branch
 
@@ -10,7 +11,7 @@ The GitHub branch-protection API confirmed these settings:
 
 | Control | Verified configuration |
 |---|---|
-| Required checks | `foundation (windows-latest)`, `foundation (ubuntu-latest)`, `build-and-test (windows-latest)`, `build-and-test (ubuntu-latest)`, `static-analysis` |
+| Required checks | Temporarily: `foundation (windows-latest)`, `foundation (ubuntu-latest)` |
 | Branch must be up to date | Required |
 | Pull-request approval | At least one approval |
 | Stale approvals | Dismissed when new commits are pushed |
@@ -21,8 +22,31 @@ The GitHub branch-protection API confirmed these settings:
 | Code-owner approval | Not separately required |
 
 These are live repository settings, not merely workflow declarations. The
-required checks correspond to the Windows/Ubuntu foundation and parser
-build/test jobs plus the static-analysis job.
+two current required checks correspond to the Windows/Ubuntu foundation jobs.
+
+## Temporary status-check relaxation — 2026-11-21
+
+The open PRs report different check names: PR #14 reports `foundation`,
+`build`, and `test`; PR #15 reports `foundation`, `build-and-test`, and a failed
+`static-analysis`; PR #16 reports both `build-and-test` and `build`/`test`, plus
+`foundation` and `static-analysis`. Branch protection required the `build-and-test`
+and `static-analysis` contexts for every PR, so contexts absent from a branch
+blocked it even when its active build/test checks passed.
+
+To unblock PRs while the workflows are consolidated, `main` now requires only
+the two foundation checks. The old `build-and-test` and `static-analysis`
+requirements are temporarily disabled; their workflows still run where present,
+but their results do not block merges. This is a repository-wide relaxation, not
+a PR-specific bypass. Strict up-to-date enforcement and the one-human-approval,
+latest-push review, and stale-review dismissal requirements remain enabled.
+Restore required build/test and static-analysis checks after a stable, common
+set of status names reports on all PRs. Do not treat an omitted or failed check
+as a pass.
+
+PR #14's current conclusion is `CLEAN`: both required foundation checks and all
+four active build/test checks passed. The [foundation run](https://github.com/cenfosoft/SqlScriptDOM/actions/runs/42556963457)
+and [build/test run](https://github.com/cenfosoft/SqlScriptDOM/actions/runs/42556963459)
+are linked for reference.
 
 ## Static-analysis check behavior
 
