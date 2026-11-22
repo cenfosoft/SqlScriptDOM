@@ -23,6 +23,7 @@ public sealed class CycleTests
     {
         public bool RejectClaim { get; set; }
         public bool Claimed { get; private set; }
+        public string? FinalStatus { get; private set; }
         public DateTimeOffset Expires { get; set; } = DateTimeOffset.UtcNow.AddMinutes(1);
         public List<ReviewRound> Records { get; } = [];
         public Task ClaimAsync(CycleClaim claim, CancellationToken cancellationToken)
@@ -38,15 +39,20 @@ public sealed class CycleTests
         }
         public Task<DateTimeOffset> EnsureActiveAsync(CycleClaim claim, CancellationToken cancellationToken) =>
             Task.FromResult(Expires);
+        public Task RecordFinalStatusAsync(CycleClaim claim, string status, CancellationToken cancellationToken)
+        {
+            FinalStatus = status;
+            return Task.CompletedTask;
+        }
     }
 
     private static Task<CycleResult> Run(
         Provider provider, Ledger ledger, ReviewConfiguration? config = null,
         Func<CancellationToken, Task<PullRequestState>>? readState = null,
-        CheckResult[]? checks = null, ReviewRound[]? history = null)
+        CheckResult[]? checks = null, ReviewRound[]? history = null, ReviewFile[]? files = null)
     {
         var context = new ReviewContext(FoundationTests.Sha, FoundationTests.OtherSha,
-            "Trusted guidance", "Untrusted diff", [], [], []);
+            "Trusted guidance", "Untrusted diff", files ?? [], [], []);
         return new ReviewCycle(provider, ledger).RunAsync(config ?? FoundationTests.Config(),
             FoundationTests.Run(), new("allancascante", "adversarial-review:run", FoundationTests.Sha,
                 "label-event-1", true, false), context, checks ?? FoundationTests.Checks(), history ?? [],
@@ -66,6 +72,9 @@ public sealed class CycleTests
         Assert.AreEqual(3, ledger.Records.Count);
         Assert.AreEqual(3, provider.Requests.Select(r => r.RequestIdentity).Distinct().Count());
         Assert.AreEqual(0.8m, provider.Requests[2].MaximumCostUsd);
+        CollectionAssert.AreEqual(new[] { 1000, 990, 980 }, provider.Requests.Select(r => r.MaxInputTokens).ToArray());
+        CollectionAssert.AreEqual(new[] { 500, 495, 490 }, provider.Requests.Select(r => r.MaxOutputTokens).ToArray());
+        Assert.AreEqual("complete", ledger.FinalStatus);
         await Assert.ThrowsExceptionAsync<ContractException>(() => Run(provider, ledger));
         Assert.AreEqual(3, provider.Requests.Count);
     }
@@ -115,6 +124,7 @@ public sealed class CycleTests
         var ledger = new Ledger();
         CycleResult result = await Run(provider, ledger);
         Assert.AreEqual("incomplete", result.Report.Status);
+        Assert.IsTrue(AuditEngine.RequiresHumanReview(result.Report));
         Assert.AreEqual("malformed", ledger.Records.Single().Outcome);
         Assert.AreEqual(1, provider.Requests.Count);
     }
@@ -126,6 +136,7 @@ public sealed class CycleTests
         var ledger = new Ledger();
         CycleResult result = await Run(provider, ledger);
         Assert.AreEqual("incomplete", result.Report.Status);
+        Assert.IsTrue(AuditEngine.RequiresHumanReview(result.Report));
         Assert.IsNull(ledger.Records.Single().EstimatedCostUsd);
         Assert.AreEqual("failed", ledger.Records.Single().Outcome);
         Assert.IsFalse(string.Join("", result.Diagnostics).Contains("provider payload", StringComparison.Ordinal));
@@ -139,7 +150,98 @@ public sealed class CycleTests
         CycleResult result = await Run(provider, new Ledger());
         Assert.AreEqual(1, provider.Requests.Count);
         Assert.AreEqual("incomplete", result.Report.Status);
+        Assert.IsTrue(AuditEngine.RequiresHumanReview(result.Report));
         StringAssert.Contains(string.Join("", result.Diagnostics), "budget exhausted");
+    }
+
+    [TestMethod]
+    public async Task SessionTokenBudgetsAccumulateAcrossRoundsAndStopInferenceAtTheLimit()
+    {
+        var provider = new Provider
+        {
+            Respond = (request, _) => Task.FromResult(new ModelResponse("[]",
+                Math.Min(10, request.MaxInputTokens), Math.Min(5, request.MaxOutputTokens), 1, 0.1m))
+        };
+        ReviewConfiguration config = FoundationTests.Config();
+        config = config with
+        {
+            Limits = config.Limits with { MaxInputTokens = 25, MaxOutputTokens = 7 }
+        };
+        var ledger = new Ledger();
+
+        CycleResult result = await Run(provider, ledger, config);
+
+        Assert.AreEqual(2, provider.Requests.Count);
+        CollectionAssert.AreEqual(new[] { 25, 15 }, provider.Requests.Select(r => r.MaxInputTokens).ToArray());
+        CollectionAssert.AreEqual(new[] { 7, 2 }, provider.Requests.Select(r => r.MaxOutputTokens).ToArray());
+        Assert.AreEqual("human-review-required", ledger.FinalStatus);
+        StringAssert.Contains(string.Join("", result.Diagnostics), "token budget exhausted");
+    }
+
+    [TestMethod]
+    public async Task ThirdRoundUnresolvedCriticalFindingEscalatesToHumanReview()
+    {
+        Finding critical = new("1.0", "CRITICAL-1", FoundationTests.Sha, "reviewer", "security",
+            "critical", 0.95m, "Critical issue", "Unresolved critical issue.",
+            [new("file", "src/example.cs", "Relevant source evidence.", 1, 2)],
+            "Review and remediate.", "unreviewed");
+        string findings = System.Text.Json.JsonSerializer.Serialize(new[] { critical }, Contracts.JsonOptions);
+        var provider = new Provider
+        {
+            Respond = (request, _) => Task.FromResult(new ModelResponse(
+                request.RequestIdentity.EndsWith(":3", StringComparison.Ordinal) ? findings : "[]",
+                10, 5, 1, 0.1m))
+        };
+        var ledger = new Ledger();
+
+        CycleResult result = await Run(provider, ledger, files: [new("src/example.cs", 2)]);
+
+        Assert.AreEqual(3, provider.Requests.Count);
+        Assert.AreEqual("incomplete", result.Report.Status);
+        Assert.IsTrue(AuditEngine.RequiresHumanReview(result.Report));
+        Assert.AreEqual("completed", result.Report.Rounds.Single(r => r.Number == 3).Outcome);
+        Assert.AreEqual("CRITICAL-1", result.Report.Findings.Single().Id);
+        Assert.AreEqual("critical", result.Report.Findings.Single().Severity);
+        Assert.AreEqual("unreviewed", result.Report.Findings.Single().Disposition);
+        Assert.AreEqual("human-review-required", ledger.FinalStatus);
+        StringAssert.Contains(ReportRenderer.Render(result.Report), "Human Review Required");
+    }
+
+    [TestMethod]
+    public async Task ElevatedRiskStopsFurtherModelCallsImmediately()
+    {
+        Finding high = new("1.0", "HIGH-1", FoundationTests.Sha, "reviewer", "security",
+            "high", 0.9m, "High issue", "Unresolved high issue.",
+            [new("file", "src/example.cs", "Relevant source evidence.", 1, 2)],
+            "Review and remediate.", "unreviewed");
+        string findings = System.Text.Json.JsonSerializer.Serialize(new[] { high }, Contracts.JsonOptions);
+        var provider = new Provider
+        {
+            Respond = (_, _) => Task.FromResult(new ModelResponse(findings, 10, 5, 1, 0.1m))
+        };
+
+        var ledger = new Ledger();
+        CycleResult result = await Run(provider, ledger, files: [new("src/example.cs", 2)]);
+
+        Assert.AreEqual(1, provider.Requests.Count);
+        Assert.AreEqual("incomplete", result.Report.Status);
+        Assert.IsTrue(AuditEngine.RequiresHumanReview(result.Report));
+        Assert.AreEqual("completed", result.Report.Rounds.Single().Outcome);
+        Assert.AreEqual("HIGH-1", result.Report.Findings.Single().Id);
+        Assert.AreEqual("high", result.Report.Findings.Single().Severity);
+        Assert.AreEqual("unreviewed", result.Report.Findings.Single().Disposition);
+        Assert.AreEqual("human-review-required", ledger.FinalStatus);
+    }
+
+    [TestMethod]
+    public async Task ConfigurationCannotRaiseTheThreeRoundHardLimit()
+    {
+        var config = FoundationTests.Config() with { Rounds = ReviewConfiguration.MaxRounds + 1 };
+        var provider = new Provider();
+
+        await Assert.ThrowsExceptionAsync<ContractException>(() => Run(provider, new Ledger(), config));
+
+        Assert.AreEqual(0, provider.Requests.Count);
     }
 
     [TestMethod]
@@ -169,6 +271,7 @@ public sealed class CycleTests
             config with { Limits = config.Limits with { TimeoutSeconds = 1 } });
         Assert.AreEqual(1, provider.Requests.Count);
         Assert.AreEqual("incomplete", result.Report.Status);
+        Assert.IsTrue(AuditEngine.RequiresHumanReview(result.Report));
     }
 
     [TestMethod]
@@ -200,6 +303,18 @@ public sealed class CycleTests
             CycleResult result = await Invoke(new SqliteReviewSpendLedger(path));
             Assert.AreEqual("complete", result.Report.Status);
             Assert.AreEqual(3, provider.Requests.Count);
+            using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False"))
+            {
+                await connection.OpenAsync();
+                using var command = connection.CreateCommand();
+                command.CommandText = "SELECT final_status, head_sha, authorized_actor, authorization_label FROM claims;";
+                using var reader = await command.ExecuteReaderAsync();
+                Assert.IsTrue(await reader.ReadAsync());
+                Assert.AreEqual("complete", reader.GetString(0));
+                Assert.AreEqual(FoundationTests.Sha, reader.GetString(1));
+                Assert.AreEqual("allancascante", reader.GetString(2));
+                Assert.AreEqual("adversarial-review:run", reader.GetString(3));
+            }
             await Assert.ThrowsExceptionAsync<ContractException>(() => Invoke(new SqliteReviewSpendLedger(path)));
             Assert.AreEqual(3, provider.Requests.Count);
         }

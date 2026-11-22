@@ -16,16 +16,18 @@ public static class AuditEngine
         List<string> blockers = [.. CheckPolicy.Blockers(run.HeadSha, checks)];
         bool stale = currentHeadSha != run.HeadSha;
         if (stale) blockers.Add("The evaluated PR head SHA is stale.");
-        if (rounds.Length != expectedRounds || rounds.Any(r => r.Outcome != "completed"))
+        bool incompleteRounds = rounds.Length != expectedRounds || rounds.Any(r => r.Outcome != "completed");
+        if (incompleteRounds)
             blockers.Add("One or more configured review rounds are incomplete.");
+        bool elevatedRisk = findings.Any(f => f.Severity is "critical" or "high"
+            && f.Disposition is "unreviewed" or "confirmed");
         foreach (Finding finding in findings.OrderBy(f => f.Id, StringComparer.Ordinal))
         {
             if (finding.Severity is "critical" or "high" && finding.Disposition is "unreviewed" or "confirmed")
                 blockers.Add($"Unresolved {finding.Severity} finding: {finding.Id}.");
         }
         string status = stale ? "stale" :
-            CheckPolicy.Blockers(run.HeadSha, checks).Length > 0
-            || rounds.Length != expectedRounds || rounds.Any(r => r.Outcome != "completed") ? "incomplete" : "complete";
+            CheckPolicy.Blockers(run.HeadSha, checks).Length > 0 || incompleteRounds || elevatedRisk ? "incomplete" : "complete";
         AuditReport report = new(
             "1.0", "report-only", "uncalibrated", run,
             checks.OrderBy(c => c.Name, StringComparer.Ordinal).ThenBy(c => c.Platform, StringComparer.Ordinal).ToArray(),
@@ -37,6 +39,15 @@ public static class AuditEngine
         Contracts.Write(report, "audit-report");
         return report;
     }
+
+    public static bool RequiresHumanReview(AuditReport report) =>
+        report.Status != "stale"
+        && (report.Findings.Any(f => f.Severity is "critical" or "high"
+                && f.Disposition is "unreviewed" or "confirmed")
+            || report.Rounds.Length > 0
+                && (report.Rounds.Length != report.ExpectedRounds || report.Rounds.Any(r => r.Outcome != "completed"))
+            || report.Rounds.Length > 0
+                && report.Blockers.Any(b => b.StartsWith("Execution stopped;", StringComparison.Ordinal)));
 
     private static int SeverityOrder(string severity) => severity switch
     {
@@ -51,7 +62,7 @@ public static partial class ReportRenderer
 
     public static string Render(AuditReport report, IEnumerable<string>? knownSecrets = null)
     {
-        Contracts.Write(report, "audit-report");
+        Contracts.WriteForDisplay(report, "audit-report");
         string[] secrets = (knownSecrets ?? []).Where(s => !string.IsNullOrEmpty(s))
             .OrderByDescending(s => s.Length).ToArray();
         string Safe(string text) => Escape(Redact(text, secrets));
@@ -60,7 +71,8 @@ public static partial class ReportRenderer
         output.AppendLine($"PR: {Safe(report.Run.Repository)} #{report.Run.PullRequest}");
         output.AppendLine($"Head SHA: `{Safe(report.Run.HeadSha)}`  ");
         output.AppendLine($"Trusted configuration: `{Safe(report.Run.ConfigurationSha)}`  ");
-        output.AppendLine($"Status: **{report.Status}**; rounds: {report.Rounds.Length}/{report.ExpectedRounds}\n");
+        string displayStatus = AuditEngine.RequiresHumanReview(report) ? "Human Review Required" : report.Status;
+        output.AppendLine($"Status: **{displayStatus}**; rounds: {report.Rounds.Length}/{report.ExpectedRounds}\n");
         bool safeRepository = Redact(report.Run.Repository, secrets) == report.Run.Repository;
         output.AppendLine(safeRepository
             ? $"[Workflow run](https://github.com/{report.Run.Repository}/actions/runs/{report.Run.WorkflowRunId})\n"
