@@ -4,7 +4,7 @@ root = true
 dotnet_analyzer_diagnostic.severity = none
 
 [SqlScriptDom/Parser/TSql/Vector*.cs]
-dotnet_analyzer_diagnostic.severity = warning
+dotnet_analyzer_diagnostic.severity = error
 
 [SqlScriptDom/ScriptDom/SqlServer/ScriptGenerator/SqlScriptGeneratorVisitor.*Vector*.cs]
-dotnet_analyzer_diagnostic.severity = warning
+dotnet_analyzer_diagnostic.severity = error

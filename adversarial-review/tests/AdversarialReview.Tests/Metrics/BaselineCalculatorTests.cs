@@ -59,6 +59,51 @@ public sealed class BaselineCalculatorTests
     }
 
     [TestMethod]
+    public void InvalidOldPullRequestsMakeTheReportIncompleteBeforeWindowExclusion()
+    {
+        DateTimeOffset start = Observation.AddMonths(-6);
+        BaselineReport report = Calculate(
+        [
+            Pull(1) with
+            {
+                CreatedAt = start.AddYears(-1),
+                UpdatedAt = start.AddDays(-1),
+                State = "unknown",
+                TimelineStatus = TimelineStatus.NotRequested
+            },
+            Pull(2) with
+            {
+                CreatedAt = start.AddDays(1),
+                UpdatedAt = start.AddDays(-1),
+                TimelineStatus = TimelineStatus.NotRequested
+            }
+        ]);
+
+        Assert.AreEqual(2, report.ExclusionCounts["InvalidPullRequestState"]);
+        Assert.IsFalse(report.ExclusionCounts.ContainsKey("OutsideReadinessWindow"));
+        Assert.IsFalse(report.IsComplete);
+    }
+
+    [TestMethod]
+    public void ValidOldPullRequestIsExcludedWithoutMakingReportIncomplete()
+    {
+        DateTimeOffset start = Observation.AddMonths(-6);
+        BaselineReport report = Calculate(
+        [
+            Pull(1) with
+            {
+                CreatedAt = start.AddYears(-1),
+                UpdatedAt = start.AddDays(-1),
+                TimelineStatus = TimelineStatus.NotRequested
+            }
+        ]);
+
+        Assert.AreEqual(1, report.ExclusionCounts["OutsideReadinessWindow"]);
+        Assert.AreEqual(0, report.OpenCensored.Count);
+        Assert.IsTrue(report.IsComplete);
+    }
+
+    [TestMethod]
     public void TracksFirstReadinessAndIncludesSubsequentDraftIntervals()
     {
         DateTimeOffset created = Observation.AddDays(-10);

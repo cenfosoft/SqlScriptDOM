@@ -101,15 +101,21 @@ public sealed class GitHubReviewEvidence(GitHubReviewApi api, HttpClient artifac
                 blockers.Add($"Required {check}/{platform} artifact is missing or duplicated.");
                 continue;
             }
-            string jobName = platform == "independent" ? check : $"{check} ({os})";
+            string jobName = platform == "independent" ? "static-analysis" : $"{check} ({os})";
             JsonElement[] matchingJobs = jobs.Where(j => j.GetProperty("name").GetString() == jobName).ToArray();
             if (matchingJobs.Length != 1 || matchingJobs[0].GetProperty("status").GetString() != "completed"
                 || matchingJobs[0].GetProperty("conclusion").GetString() != "success"
                 || matchingJobs[0].GetProperty("run_id").GetInt64() != admission.ValidationRunId)
                 throw new ContractException("Evidence does not have one successful authoritative job in the admitted attempt.");
-            string stepName = check == "build" ? "Build"
-                : check == "test" ? platform == "windows" ? "Run tests Windows" : "Run tests Linux"
-                : check == "semgrep" ? "Run Semgrep" : "Run Roslyn";
+            string stepName = check switch
+            {
+                "build" => "Build",
+                "test" when platform == "windows" => "Run tests Windows",
+                "test" when platform == "ubuntu" => "Run tests Linux",
+                "semgrep" => "Run Semgrep",
+                "roslyn" => "Run Roslyn",
+                _ => throw new ContractException("Evidence check is not supported.")
+            };
             JsonElement[] steps = matchingJobs[0].GetProperty("steps").EnumerateArray()
                 .Where(s => s.GetProperty("name").GetString() == stepName).ToArray();
             if (steps.Length != 1 || steps[0].GetProperty("status").GetString() != "completed"

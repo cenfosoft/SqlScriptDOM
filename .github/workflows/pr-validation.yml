@@ -112,28 +112,104 @@ jobs:
         - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
           with:
             global-json-file: global.json
-        - name: Run scoped Roslyn NetAnalyzers
+        - name: Verify scoped Roslyn gate rejects violations
+          shell: bash
+          run: |
+            probe=SqlScriptDom/Parser/TSql/VectorAnalyzerGateProbe.cs
+            generator_probe=SqlScriptDom/ScriptDom/SqlServer/ScriptGenerator/SqlScriptGeneratorVisitor.VectorAnalyzerGateProbe.cs
+            if [[ -e "$probe" || -e "$generator_probe" ]]; then
+              echo "Refusing to overwrite an existing analyzer probe."
+              exit 1
+            fi
+            trap 'rm -f "$probe" "$generator_probe"' EXIT
+            cat > "$probe" <<'CS'
+            using System;
+
+            internal static class VectorAnalyzerGateProbe
+            {
+                internal static void Trigger(Exception exception)
+                {
+                    try { throw exception; }
+                    catch (Exception caught) { throw caught; }
+                }
+            }
+            CS
+            cat > "$generator_probe" <<'CS'
+            using System;
+
+            internal static class VectorGeneratorAnalyzerGateProbe
+            {
+                internal static void Trigger(Exception exception)
+                {
+                    try { throw exception; }
+                    catch (Exception caught) { throw caught; }
+                }
+            }
+            CS
+            set +e
+            dotnet build SqlScriptDom/Microsoft.SqlServer.TransactSql.ScriptDom.csproj \
+              -c Debug -f net8.0 -p:EnableNETAnalyzers=true -p:AnalysisLevel=latest \
+              -p:RunAnalyzers=true --verbosity normal > "$RUNNER_TEMP/roslyn-gate-probe.log" 2>&1
+            build_status=$?
+            set -e
+            if [[ "$build_status" -eq 0 ]] \
+              || ! grep -Eiq 'error CA2200' "$RUNNER_TEMP/roslyn-gate-probe.log" \
+              || ! grep -Fq 'SqlScriptDom/Parser/TSql/VectorAnalyzerGateProbe.cs' "$RUNNER_TEMP/roslyn-gate-probe.log" \
+              || ! grep -Fq 'SqlScriptGeneratorVisitor.VectorAnalyzerGateProbe.cs' "$RUNNER_TEMP/roslyn-gate-probe.log"; then
+              cat "$RUNNER_TEMP/roslyn-gate-probe.log"
+              echo "The scoped Roslyn gate did not fail on CA2200 in both approved Vector source globs."
+              exit 1
+            fi
+            echo "The scoped Roslyn gate rejected CA2200 violations in both approved Vector source globs."
+        - name: Run Roslyn
+          id: roslyn
+          run: |
+            mkdir -p "$RUNNER_TEMP/roslyn-evidence"
+            dotnet build SqlScriptDom/Microsoft.SqlServer.TransactSql.ScriptDom.csproj \
+              -c Debug -f net8.0 -p:EnableNETAnalyzers=true -p:AnalysisLevel=latest \
+              -p:RunAnalyzers=true -p:ErrorLog="$RUNNER_TEMP/roslyn-evidence/roslyn.sarif" \
+              --verbosity normal
+        - name: Describe Roslyn evidence
+          if: ${{ always() && steps.roslyn.outcome != 'skipped' }}
           run: >-
-            dotnet build SqlScriptDom/Microsoft.SqlServer.TransactSql.ScriptDom.csproj
-            -c Debug -f net8.0 -p:EnableNETAnalyzers=true -p:AnalysisLevel=latest
-            -p:RunAnalyzers=true --verbosity normal
+            dotnet run --project adversarial-review/src/AdversarialReview.Cli --
+            manifest "${{ runner.temp }}/roslyn-evidence" roslyn independent
+            "${{ steps.roslyn.outcome == 'success' && 'passed' || 'failed' }}"
+        - name: Upload Roslyn evidence
+          if: always()
+          uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+          with:
+            name: roslyn-independent-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+            path: ${{ runner.temp }}/roslyn-evidence/
+            if-no-files-found: warn
         - name: Install pinned Semgrep
+          id: semgrep-install
+          if: ${{ always() && steps.roslyn.outcome != 'skipped' }}
           shell: bash
           run: |
             python3 -m venv "$RUNNER_TEMP/semgrep-venv"
             "$RUNNER_TEMP/semgrep-venv/bin/python" -m pip install --disable-pip-version-check semgrep==1.184.0
-        - name: Run Semgrep rules
+        - name: Run Semgrep
+          id: semgrep
+          if: ${{ always() && steps.semgrep-install.outcome == 'success' }}
           shell: bash
           run: |
+            mkdir -p "$RUNNER_TEMP/semgrep-evidence"
             "$RUNNER_TEMP/semgrep-venv/bin/semgrep" scan \
               --config .semgrep.yml \
               --sarif \
-              --output "$RUNNER_TEMP/semgrep.sarif" \
+              --output "$RUNNER_TEMP/semgrep-evidence/semgrep.sarif" \
               --error
-        - name: Upload Semgrep results
+        - name: Describe Semgrep evidence
+          if: ${{ always() && steps.semgrep.outcome != 'skipped' }}
+          run: >-
+            dotnet run --project adversarial-review/src/AdversarialReview.Cli --
+            manifest "${{ runner.temp }}/semgrep-evidence" semgrep independent
+            "${{ steps.semgrep.outcome == 'success' && 'passed' || 'failed' }}"
+        - name: Upload Semgrep evidence
           if: always()
           uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
           with:
-            name: semgrep-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
-            path: ${{ runner.temp }}/semgrep.sarif
+            name: semgrep-independent-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+            path: ${{ runner.temp }}/semgrep-evidence/
             if-no-files-found: warn

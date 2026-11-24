@@ -137,11 +137,19 @@ requires a finite-timeout client with automatic redirects disabled.
 
 `GitHubReviewEvidence` lists the admitted run's artifacts and exact attempt's jobs.
 Required artifacts are named `<check>-<os>-<headSha>-<attempt>`, where OS is
-`windows-latest`, `ubuntu-latest`, or `independent`. Jobs must be successful
-`build (<os>)`/`test (<os>)` or independent `semgrep`/`roslyn`; required steps are
-`Build`, `Run tests Windows`, `Run tests Linux`, `Run Semgrep`, and `Run Roslyn`.
-Analyzer jobs/artifacts do not exist until the team supplies policy; missing evidence
-remains a blocker, never a synthetic pass.
+`windows-latest`, `ubuntu-latest`, or `independent`. Build/test jobs are
+`build (<os>)`/`test (<os>)`. The combined `static-analysis` job provides distinct
+`semgrep-independent-<headSha>-<attempt>` and
+`roslyn-independent-<headSha>-<attempt>` artifacts, each with its own SHA-bound
+manifest. The consumer verifies both artifacts against the same successful
+`static-analysis` job and the distinct successful `Run Semgrep` and `Run Roslyn`
+steps. Missing evidence remains a blocker, never a synthetic pass.
+
+The Roslyn policy treats analyzer diagnostics as errors only in the two Vector
+source globs selected in `.editorconfig`; it does not promote legacy warnings
+outside those paths. CI injects a temporary CA2200 violation under the approved
+scope and requires the same build command to fail on that diagnostic before
+running the clean analysis build.
 
 Downloads are bounded at 55 MiB compressed; manifest/raw limits additionally apply.
 ZIPs are inspected in memory, not extracted or executed. Absolute/traversal/device
@@ -268,9 +276,10 @@ the team must approve a retention policy before live review.
 
 Trusted consumption must verify workflow provenance and safe archive extraction
 **before** parsing a manifest; checksum validation alone is insufficient. Semgrep
-and Roslyn evidence remain unavailable until team-owned policies are supplied.
-Missing outputs or a failed manifest step are failures/incomplete evidence, never
-successful deterministic checks.
+and scoped Roslyn evidence are published separately by the combined analysis job;
+the manifests establish file integrity and identity, not correctness of contributor
+code or analyzer policy. Missing outputs or a failed manifest step are
+failures/incomplete evidence, never successful deterministic checks.
 
 ## Bounded reviewer inputs and outputs
 

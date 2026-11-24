@@ -54,10 +54,6 @@ public static class BaselineCalculator
             {
                 exclusion = "ClosedUnmerged";
             }
-            else if (pr.UpdatedAt < start)
-            {
-                exclusion = "OutsideReadinessWindow";
-            }
             else if ((pr.State != "open" && pr.State != "closed")
                 || (pr.State == "open" && (pr.MergedAt is not null || pr.ClosedAt is not null))
                 || pr.UpdatedAt < pr.CreatedAt
@@ -65,6 +61,10 @@ public static class BaselineCalculator
             {
                 exclusion = "InvalidPullRequestState";
                 uncertain = true;
+            }
+            else if (pr.UpdatedAt < start)
+            {
+                exclusion = "OutsideReadinessWindow";
             }
             else if (pr.TimelineStatus != TimelineStatus.Complete)
             {
