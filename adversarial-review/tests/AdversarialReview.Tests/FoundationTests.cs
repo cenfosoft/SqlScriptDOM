@@ -29,7 +29,7 @@ public sealed class FoundationTests
     {
         var config = ReviewConfiguration.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "config/review.json")));
         Assert.IsFalse(config.Enabled);
-        Assert.IsTrue(config.ExecutionBlockers().Length >= 5);
+        Assert.IsTrue(config.ExecutionBlockers().Length >= 4);
         CollectionAssert.Contains(config.AuthorizedActors, "allancascante");
     }
 

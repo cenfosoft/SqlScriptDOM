@@ -30,11 +30,24 @@ public static class Contracts
     public static string Write<T>(T value, string schemaName)
     {
         string json = JsonSerializer.Serialize(value, JsonOptions);
-        Validate(json, schemaName);
+        ValidateCore(json, schemaName, allowLegacyCompleteHighRisk: false);
         return json;
     }
 
     public static void Validate(string json, string schemaName)
+    {
+        // Audit v1.0 readers must accept complete reports produced before risk escalation.
+        ValidateCore(json, schemaName, allowLegacyCompleteHighRisk: true);
+    }
+
+    internal static string WriteForDisplay<T>(T value, string schemaName)
+    {
+        string json = JsonSerializer.Serialize(value, JsonOptions);
+        ValidateCore(json, schemaName, allowLegacyCompleteHighRisk: true);
+        return json;
+    }
+
+    private static void ValidateCore(string json, string schemaName, bool allowLegacyCompleteHighRisk)
     {
         if (System.Text.Encoding.UTF8.GetByteCount(json) > MaximumDocumentBytes)
             throw new ContractException("JSON exceeds the document size limit.");
@@ -47,7 +60,7 @@ public static class Contracts
         EvaluationResults result = schema.Evaluate(JsonNode.Parse(json), options);
         if (!result.IsValid)
             throw new ContractException($"Document does not satisfy {schemaName} schema version {Version}.");
-        ValidateSemantics(document.RootElement, schemaName);
+        ValidateSemantics(document.RootElement, schemaName, allowLegacyCompleteHighRisk);
     }
 
     private static JsonDocument ParseDocument(string json)
@@ -62,7 +75,7 @@ public static class Contracts
         }
     }
 
-    private static void ValidateSemantics(JsonElement root, string schemaName)
+    private static void ValidateSemantics(JsonElement root, string schemaName, bool allowLegacyCompleteHighRisk)
     {
         if (schemaName == "finding")
             ValidateFinding(JsonSerializer.Deserialize<Finding>(root, JsonOptions)!);
@@ -82,8 +95,11 @@ public static class Contracts
         if (audit.Rounds.Where((round, index) => round.Number != index + 1).Any()
             || audit.Rounds.Length > audit.ExpectedRounds)
             throw new ContractException("Audit rounds must be ordered, contiguous, and within the expected count.");
-        if (audit.Status == "complete" && (audit.Rounds.Length != audit.ExpectedRounds
-            || audit.Rounds.Any(r => r.Outcome != "completed")
+        bool incompleteRounds = audit.Rounds.Length != audit.ExpectedRounds
+            || audit.Rounds.Any(r => r.Outcome != "completed");
+        bool elevatedRisk = audit.Findings.Any(f => f.Severity is "critical" or "high"
+            && f.Disposition is "unreviewed" or "confirmed");
+        if (audit.Status == "complete" && (incompleteRounds || (!allowLegacyCompleteHighRisk && elevatedRisk)
             || CheckPolicy.Blockers(audit.Run.HeadSha, audit.Checks).Length != 0))
             throw new ContractException("A complete audit requires all expected rounds and mandatory checks.");
     }
