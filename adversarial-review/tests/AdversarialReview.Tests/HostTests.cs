@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Data.Sqlite;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace AdversarialReview.Tests;
@@ -51,6 +52,24 @@ public sealed class HostTests
         new ReviewContext(admission.HeadSha, admission.ConfigurationSha, "Trusted", "Diff", [],
             CheckPolicy.Required.Select(c => c.Name + "/" + c.Platform).ToArray(),
             Enumerable.Range(1, 6).Select(i => $"actions-artifact:{i}").ToArray()));
+
+    private static async Task<string?> ReadFinalStatusAsync(string databasePath)
+    {
+        await using SqliteConnection connection = new(new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false
+        }.ToString());
+        await connection.OpenAsync();
+        await using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT final_status FROM claims
+            WHERE repository = 'owner/repo' AND pull_request = 1;
+            """;
+        object? status = await command.ExecuteScalarAsync();
+        return status is string value ? value : null;
+    }
 
     [TestMethod]
     public async Task HostPersistsReportHistoryRotationAndPreventsPaidReplay()
@@ -132,8 +151,9 @@ public sealed class HostTests
             AfterReview = () => admission.Responses["/repos/owner/repo/issues/1/events?per_page=100&page=1"][0]!["event"] = "unlabeled"
         };
         var store = new ReviewHostStorage(root);
+        string databasePath = Path.Combine(root, "spend.db");
         var host = new TrustedReviewHost(new(AdmissionTests.Api(http)), new(AdmissionTests.Api(http), http),
-            new(Path.Combine(root, "spend.db")), provider, store);
+            new(databasePath), provider, store);
         AuditReport report = await host.RunAsync(FoundationTests.Config(), AdmissionTests.Request(), 100, 1, true, Context,
             _ => Task.FromResult(new PullRequestState(FoundationTests.Sha, true, false)), [], CancellationToken.None);
         Assert.AreEqual("incomplete", report.Status);
@@ -141,6 +161,47 @@ public sealed class HostTests
         Assert.AreEqual(0.01m, report.Rounds.Single().EstimatedCostUsd);
         StringAssert.Contains(report.Limitations.Single(), "Recovery");
         Assert.AreEqual(report.Run, (await store.ReadAsync(report.Run, CancellationToken.None)).Run);
+        Assert.AreEqual("human-review-required", await ReadFinalStatusAsync(databasePath));
+    }
+
+    [DataTestMethod]
+    [DataRow("budget")]
+    [DataRow("state-query-between-rounds")]
+    [DataRow("final-state-query")]
+    public async Task InterruptedCyclePersistsHumanReviewStatus(string failure)
+    {
+        using var admission = new AdmissionTests.Handler();
+        using var evidence = new IngestionTests.EvidenceHandler();
+        using HttpClient http = new(new Router(admission, evidence));
+        var provider = new Provider();
+        string databasePath = Path.Combine(root, "spend-" + failure + ".db");
+        var store = new ReviewHostStorage(root);
+        var host = new TrustedReviewHost(new(AdmissionTests.Api(http)), new(AdmissionTests.Api(http), http),
+            new(databasePath), provider, store);
+        ReviewConfiguration config = FoundationTests.Config();
+        if (failure == "budget")
+            config = config with { Limits = config.Limits with { PerAuthorizationUsd = 0.01m } };
+        int stateReads = 0;
+
+        AuditReport report = await host.RunAsync(config, AdmissionTests.Request(), 100, 1, true, Context,
+            _ =>
+            {
+                int failureRead = failure switch
+                {
+                    "state-query-between-rounds" => 3,
+                    "final-state-query" => 5,
+                    _ => -1
+                };
+                if (++stateReads == failureRead)
+                    throw new HttpRequestException("PR state unavailable.");
+                return Task.FromResult(new PullRequestState(FoundationTests.Sha, true, false));
+            }, [], CancellationToken.None);
+
+        Assert.AreEqual("incomplete", report.Status);
+        int expectedRounds = failure switch { "final-state-query" => 3, "budget" => 1, _ => 1 };
+        Assert.AreEqual(expectedRounds, provider.Models.Count);
+        Assert.AreEqual(expectedRounds, report.Rounds.Length);
+        Assert.AreEqual("human-review-required", await ReadFinalStatusAsync(databasePath));
     }
 
     [TestMethod]
