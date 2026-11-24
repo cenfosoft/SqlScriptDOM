@@ -33,12 +33,19 @@ public sealed record EvidenceManifest(
             if (files.Count > MaximumFiles || files.Sum(f => f.Bytes) > MaximumTotalBytes)
                 throw new ContractException("Evidence exceeds file count or total size limit.");
         }
-        var manifest = new EvidenceManifest("1.0", identity, check, platform, conclusion,
+        var manifest = new EvidenceManifest("1.0", identity, check, NormalizePlatform(platform), conclusion,
             files.OrderBy(f => f.Path, StringComparer.Ordinal).ToArray());
         Contracts.Write(manifest, "evidence-manifest");
         if (files.Count == 0) throw new ContractException("No raw evidence files were found.");
         return manifest;
     }
+
+    private static string NormalizePlatform(string platform) => platform switch
+    {
+        "windows-latest" => "windows",
+        "ubuntu-latest" => "ubuntu",
+        _ => platform,
+    };
 
     public void Verify(string directory, EvidenceIdentity expected)
     {
