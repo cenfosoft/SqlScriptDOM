@@ -1,0 +1,10 @@
+root = true
+
+[**/*.cs]
+dotnet_analyzer_diagnostic.severity = none
+
+[SqlScriptDom/Parser/TSql/Vector*.cs]
+dotnet_analyzer_diagnostic.severity = warning
+
+[SqlScriptDom/ScriptDom/SqlServer/ScriptGenerator/SqlScriptGeneratorVisitor.*Vector*.cs]
+dotnet_analyzer_diagnostic.severity = warning
