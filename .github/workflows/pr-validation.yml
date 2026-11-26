@@ -7,43 +7,63 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: pr-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     if: ${{ !github.event.pull_request.draft }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
     steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        persist-credentials: false
-    - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-      with:
-        global-json-file: global.json
-    - name: Install dependencies
-      run: dotnet restore
-    - name: Build
-      id: build
-      run: dotnet build dirs.proj -fl "-flp:logfile=${{ runner.temp }}/build-evidence/build.log;verbosity=normal"
-    - name: Describe build evidence
-      if: ${{ always() && steps.build.outcome != 'skipped' }}
-      run: dotnet run --project adversarial-review/src/AdversarialReview.Cli -- manifest "${{ runner.temp }}/build-evidence" build "${{ matrix.os == 'windows-latest' && 'windows' || 'ubuntu' }}" "${{ steps.build.outcome == 'success' && 'passed' || 'failed' }}"
-    - name: Upload build evidence
-      if: always()
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-      with:
-        name: build-${{ matrix.os }}-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/build-evidence/
-    - name: Archive antlr log for troubleshooting
-      if: ${{ failure() && matrix.os == 'ubuntu-latest' }}
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-      with:
-        name: antlr-log
-        path: SqlScriptDom/NUL
-  test: 
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Initialize build evidence
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}/build-evidence" | Out-Null
+
+      - name: Install dependencies
+        run: dotnet restore
+
+      - name: Build
+        id: build
+        run: dotnet build dirs.proj -fl "-flp:logfile=${{ runner.temp }}/build-evidence/build.log;verbosity=normal"
+
+      - name: Describe build evidence
+        if: ${{ always() && steps.build.outcome != 'skipped' }}
+        run: dotnet run --project adversarial-review/src/AdversarialReview.Cli -- manifest "${{ runner.temp }}/build-evidence" build "${{ matrix.os == 'windows-latest' && 'windows' || 'ubuntu' }}" "${{ steps.build.outcome == 'success' && 'passed' || 'failed' }}"
+
+      - name: Upload build evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-${{ matrix.os }}-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/build-evidence/
+          if-no-files-found: warn
+
+      - name: Archive antlr log for troubleshooting
+        if: ${{ failure() && matrix.os == 'ubuntu-latest' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: antlr-log
+          path: SqlScriptDom/NUL
+          if-no-files-found: warn
+
+  test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -53,163 +73,324 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
+
+      - name: Initialize test evidence
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}/test-results" | Out-Null
+
+      - name: Build evidence manifest CLI
+        id: manifest-cli
+        shell: pwsh
+        run: |
+          $log = Join-Path "${{ runner.temp }}" "test-results/evidence-cli-build.log"
+          dotnet build adversarial-review/src/AdversarialReview.Cli/AdversarialReview.Cli.csproj -c Debug -f net8.0 *> $log
+          $exitCode = $LASTEXITCODE
+          Get-Content -Path $log
+          if ($exitCode -ne 0) { exit $exitCode }
+
       - name: Disable strong name validation
+        id: strong-name
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           .\disableStrongName.ps1
 
+      - name: Build ScriptDOM on .NET 8
+        id: scriptdom-build
+        shell: pwsh
+        run: |
+          $log = Join-Path "${{ runner.temp }}" "test-results/scriptdom-build.log"
+          dotnet build SqlScriptDom/Microsoft.SqlServer.TransactSql.ScriptDom.csproj -c Debug -f net8.0 *> $log
+          $exitCode = $LASTEXITCODE
+          Get-Content -Path $log
+          if ($exitCode -ne 0) { exit $exitCode }
+
+      - name: Build the SqlDom test assembly on .NET 8
+        id: tests-build
+        shell: pwsh
+        run: |
+          $log = Join-Path "${{ runner.temp }}" "test-results/ut-scriptdom-build.log"
+          dotnet build Test/SqlDom/UTSqlScriptDom.csproj -c Debug -f net8.0 *> $log
+          $exitCode = $LASTEXITCODE
+          Get-Content -Path $log
+          if ($exitCode -ne 0) { exit $exitCode }
+
       - name: Run tests Windows
         id: windows-tests
         if: matrix.os == 'windows-latest'
-        run: dotnet test --logger trx --results-directory "${{ runner.temp }}/test-evidence"
+        shell: pwsh
+        run: |
+          $log = Join-Path "${{ runner.temp }}" "test-results/ut-scriptdom-test.log"
+          dotnet test Test/SqlDom/UTSqlScriptDom.csproj -c Debug -f net8.0 --no-build --logger "trx;LogFileName=ut-scriptdom-${{ matrix.os }}.trx" --results-directory "${{ runner.temp }}/test-results" *> $log
+          $exitCode = $LASTEXITCODE
+          Get-Content -Path $log
+          if ($exitCode -ne 0) { exit $exitCode }
 
       - name: Run tests Linux
         id: ubuntu-tests
         if: matrix.os == 'ubuntu-latest'
-        run: dotnet test /p:TargetFramework=net8.0 --logger trx --results-directory "${{ runner.temp }}/test-evidence"
-      - name: Describe test evidence
-        if: ${{ always() && (steps.windows-tests.outcome != 'skipped' || steps.ubuntu-tests.outcome != 'skipped') }}
-        run: dotnet run --project adversarial-review/src/AdversarialReview.Cli -- manifest "${{ runner.temp }}/test-evidence" test "${{ matrix.os == 'windows-latest' && 'windows' || 'ubuntu' }}" "${{ (steps.windows-tests.outcome == 'success' || steps.ubuntu-tests.outcome == 'success') && 'passed' || 'failed' }}"
-      - name: Upload test evidence
+        shell: pwsh
+        run: |
+          $log = Join-Path "${{ runner.temp }}" "test-results/ut-scriptdom-test.log"
+          dotnet test Test/SqlDom/UTSqlScriptDom.csproj -c Debug -f net8.0 --no-build --logger "trx;LogFileName=ut-scriptdom-${{ matrix.os }}.trx" --results-directory "${{ runner.temp }}/test-results" *> $log
+          $exitCode = $LASTEXITCODE
+          Get-Content -Path $log
+          if ($exitCode -ne 0) { exit $exitCode }
+
+      - name: Require all 1,176 tests to pass
+        id: test-count
+        if: ${{ always() && (steps.windows-tests.outcome == 'success' || steps.ubuntu-tests.outcome == 'success') }}
+        shell: pwsh
+        run: |
+          $trxFiles = @(Get-ChildItem -Path "${{ runner.temp }}/test-results" -Filter "*.trx" -File)
+          if ($trxFiles.Count -ne 1) {
+            throw "Expected one TRX report for the unfiltered SqlDom suite; found $($trxFiles.Count)."
+          }
+
+          [xml]$trx = Get-Content -Path $trxFiles[0].FullName -Raw
+          $counters = $trx.TestRun.ResultSummary.Counters
+          $total = [int]$counters.total
+          $passed = [int]$counters.passed
+          $failed = [int]$counters.failed
+          $notExecuted = [int]$counters.notExecuted
+          Write-Host "SqlDom tests: total=$total passed=$passed failed=$failed notExecuted=$notExecuted"
+
+          if ($total -ne 1176 -or $passed -ne 1176 -or $failed -ne 0 -or $notExecuted -ne 0) {
+            throw "The complete SqlDom suite must report exactly 1,176 passed tests, with no failures or skipped tests."
+          }
+
+      - name: Record trusted test-run metadata
+        if: always()
+        shell: pwsh
+        run: |
+          $testOutcome = if ('${{ matrix.os }}' -eq 'windows-latest') {
+            '${{ steps.windows-tests.outcome }}'
+          } else {
+            '${{ steps.ubuntu-tests.outcome }}'
+          }
+          $countOutcome = '${{ steps.test-count.outcome }}'
+
+          if ($testOutcome -eq 'success' -and $countOutcome -eq 'success') {
+            $conclusion = 'passed'
+          } elseif ($testOutcome -eq 'cancelled' -or $countOutcome -eq 'cancelled') {
+            $conclusion = 'cancelled'
+          } elseif ($testOutcome -eq 'skipped') {
+            $conclusion = 'missing'
+          } else {
+            $conclusion = 'failed'
+          }
+
+          [ordered]@{
+            repository = '${{ github.repository }}'
+            repositoryId = '${{ github.repository_id }}'
+            pullRequest = [int]'${{ github.event.pull_request.number }}'
+            headSha = '${{ github.event.pull_request.head.sha }}'
+            runId = '${{ github.run_id }}'
+            runAttempt = '${{ github.run_attempt }}'
+            platform = '${{ matrix.os }}'
+            strongNameOutcome = '${{ steps.strong-name.outcome }}'
+            scriptDomBuildOutcome = '${{ steps.scriptdom-build.outcome }}'
+            testAssemblyBuildOutcome = '${{ steps.tests-build.outcome }}'
+            manifestCliBuildOutcome = '${{ steps.manifest-cli.outcome }}'
+            testOutcome = $testOutcome
+            testCountOutcome = $countOutcome
+            conclusion = $conclusion
+          } | ConvertTo-Json | Set-Content -Path "${{ runner.temp }}/test-results/run-metadata.json"
+
+      - name: Create SHA-bound test evidence manifest
+        if: always()
+        shell: pwsh
+        run: |
+          $platform = if ('${{ matrix.os }}' -eq 'windows-latest') { 'windows' } else { 'ubuntu' }
+          $metadata = Get-Content -Path "${{ runner.temp }}/test-results/run-metadata.json" -Raw | ConvertFrom-Json
+          dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- manifest `
+            "${{ runner.temp }}/test-results" `
+            "test" `
+            $platform `
+            $metadata.conclusion
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-${{ matrix.os }}-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/test-evidence/
+          path: ${{ runner.temp }}/test-results/
+          if-no-files-found: warn
 
   build-and-test:
     if: ${{ always() && !github.event.pull_request.draft }}
     needs: [build, test]
     runs-on: ${{ matrix.os }}
     strategy:
-        fail-fast: false
-        matrix:
-          os: [windows-latest, ubuntu-latest]
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
     steps:
-        - name: Require successful build and test matrices
-          shell: bash
-          env:
-            BUILD_RESULT: ${{ needs.build.result }}
-            TEST_RESULT: ${{ needs.test.result }}
-          run: |
-            if [[ "$BUILD_RESULT" != "success" || "$TEST_RESULT" != "success" ]]; then
-              echo "Required build/test matrices did not both succeed."
-              exit 1
-            fi
+      - name: Require successful build and test matrices
+        shell: bash
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          if [[ "$BUILD_RESULT" != "success" || "$TEST_RESULT" != "success" ]]; then
+            echo "Required build/test matrices did not both succeed."
+            exit 1
+          fi
 
   static-analysis:
     if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-        - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-          with:
-            persist-credentials: false
-        - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-          with:
-            global-json-file: global.json
-        - name: Verify scoped Roslyn gate rejects violations
-          shell: bash
-          run: |
-            probe=SqlScriptDom/Parser/TSql/VectorAnalyzerGateProbe.cs
-            generator_probe=SqlScriptDom/ScriptDom/SqlServer/ScriptGenerator/SqlScriptGeneratorVisitor.VectorAnalyzerGateProbe.cs
-            if [[ -e "$probe" || -e "$generator_probe" ]]; then
-              echo "Refusing to overwrite an existing analyzer probe."
-              exit 1
-            fi
-            trap 'rm -f "$probe" "$generator_probe"' EXIT
-            cat > "$probe" <<'CS'
-            using System;
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-            internal static class VectorAnalyzerGateProbe
-            {
-                internal static void Trigger(Exception exception)
-                {
-                    try { throw exception; }
-                    catch (Exception caught) { throw caught; }
-                }
-            }
-            CS
-            cat > "$generator_probe" <<'CS'
-            using System;
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
 
-            internal static class VectorGeneratorAnalyzerGateProbe
-            {
-                internal static void Trigger(Exception exception)
-                {
-                    try { throw exception; }
-                    catch (Exception caught) { throw caught; }
-                }
-            }
-            CS
-            set +e
-            dotnet build SqlScriptDom/Microsoft.SqlServer.TransactSql.ScriptDom.csproj \
-              -c Debug -f net8.0 -p:EnableNETAnalyzers=true -p:AnalysisLevel=latest \
-              -p:RunAnalyzers=true --verbosity normal > "$RUNNER_TEMP/roslyn-gate-probe.log" 2>&1
-            build_status=$?
-            set -e
-            if [[ "$build_status" -eq 0 ]] \
-              || ! grep -Eiq 'error CA2200' "$RUNNER_TEMP/roslyn-gate-probe.log" \
-              || ! grep -Fq 'SqlScriptDom/Parser/TSql/VectorAnalyzerGateProbe.cs' "$RUNNER_TEMP/roslyn-gate-probe.log" \
-              || ! grep -Fq 'SqlScriptGeneratorVisitor.VectorAnalyzerGateProbe.cs' "$RUNNER_TEMP/roslyn-gate-probe.log"; then
-              cat "$RUNNER_TEMP/roslyn-gate-probe.log"
-              echo "The scoped Roslyn gate did not fail on CA2200 in both approved Vector source globs."
-              exit 1
-            fi
-            echo "The scoped Roslyn gate rejected CA2200 violations in both approved Vector source globs."
-        - name: Run Roslyn
-          id: roslyn
-          run: |
-            mkdir -p "$RUNNER_TEMP/roslyn-evidence"
-            dotnet build SqlScriptDom/Microsoft.SqlServer.TransactSql.ScriptDom.csproj \
-              -c Debug -f net8.0 -p:EnableNETAnalyzers=true -p:AnalysisLevel=latest \
-              -p:RunAnalyzers=true -p:ErrorLog="$RUNNER_TEMP/roslyn-evidence/roslyn.sarif" \
-              --verbosity normal
-        - name: Describe Roslyn evidence
-          if: ${{ always() && steps.roslyn.outcome != 'skipped' }}
-          run: >-
-            dotnet run --project adversarial-review/src/AdversarialReview.Cli --
-            manifest "${{ runner.temp }}/roslyn-evidence" roslyn independent
-            "${{ steps.roslyn.outcome == 'success' && 'passed' || 'failed' }}"
-        - name: Upload Roslyn evidence
-          if: always()
-          uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-          with:
-            name: roslyn-independent-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
-            path: ${{ runner.temp }}/roslyn-evidence/
-            if-no-files-found: warn
-        - name: Install pinned Semgrep
-          id: semgrep-install
-          if: ${{ always() && steps.roslyn.outcome != 'skipped' }}
-          shell: bash
-          run: |
-            python3 -m venv "$RUNNER_TEMP/semgrep-venv"
-            "$RUNNER_TEMP/semgrep-venv/bin/python" -m pip install --disable-pip-version-check semgrep==1.184.0
-        - name: Run Semgrep
-          id: semgrep
-          if: ${{ always() && steps.semgrep-install.outcome == 'success' }}
-          shell: bash
-          run: |
-            mkdir -p "$RUNNER_TEMP/semgrep-evidence"
-            "$RUNNER_TEMP/semgrep-venv/bin/semgrep" scan \
-              --config .semgrep.yml \
-              --sarif \
-              --output "$RUNNER_TEMP/semgrep-evidence/semgrep.sarif" \
-              --error
-        - name: Describe Semgrep evidence
-          if: ${{ always() && steps.semgrep.outcome != 'skipped' }}
-          run: >-
-            dotnet run --project adversarial-review/src/AdversarialReview.Cli --
-            manifest "${{ runner.temp }}/semgrep-evidence" semgrep independent
-            "${{ steps.semgrep.outcome == 'success' && 'passed' || 'failed' }}"
-        - name: Upload Semgrep evidence
-          if: always()
-          uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-          with:
-            name: semgrep-independent-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
-            path: ${{ runner.temp }}/semgrep-evidence/
-            if-no-files-found: warn
+      - name: Verify scoped Roslyn gate rejects violations
+        shell: bash
+        run: |
+          probe=SqlScriptDom/Parser/TSql/VectorAnalyzerGateProbe.cs
+          generator_probe=SqlScriptDom/ScriptDom/SqlServer/ScriptGenerator/SqlScriptGeneratorVisitor.VectorAnalyzerGateProbe.cs
+          if [[ -e "$probe" || -e "$generator_probe" ]]; then
+            echo "Refusing to overwrite an existing analyzer probe."
+            exit 1
+          fi
+          trap 'rm -f "$probe" "$generator_probe"' EXIT
+          cat > "$probe" <<'CS'
+          using System;
+
+          internal static class VectorAnalyzerGateProbe
+          {
+              internal static void Trigger(Exception exception)
+              {
+                  try { throw exception; }
+                  catch (Exception caught) { throw caught; }
+              }
+          }
+          CS
+          cat > "$generator_probe" <<'CS'
+          using System;
+
+          internal static class VectorGeneratorAnalyzerGateProbe
+          {
+              internal static void Trigger(Exception exception)
+              {
+                  try { throw exception; }
+                  catch (Exception caught) { throw caught; }
+              }
+          }
+          CS
+          set +e
+          dotnet build SqlScriptDom/Microsoft.SqlServer.TransactSql.ScriptDom.csproj \
+            -c Debug -f net8.0 -p:EnableNETAnalyzers=true -p:AnalysisLevel=latest \
+            -p:RunAnalyzers=true --verbosity normal > "$RUNNER_TEMP/roslyn-gate-probe.log" 2>&1
+          build_status=$?
+          set -e
+          if [[ "$build_status" -eq 0 ]] \
+            || ! grep -Eiq 'error CA2200' "$RUNNER_TEMP/roslyn-gate-probe.log" \
+            || ! grep -Fq 'SqlScriptDom/Parser/TSql/VectorAnalyzerGateProbe.cs' "$RUNNER_TEMP/roslyn-gate-probe.log" \
+            || ! grep -Fq 'SqlScriptGeneratorVisitor.VectorAnalyzerGateProbe.cs' "$RUNNER_TEMP/roslyn-gate-probe.log"; then
+            cat "$RUNNER_TEMP/roslyn-gate-probe.log"
+            echo "The scoped Roslyn gate did not fail on CA2200 in both approved Vector source globs."
+            exit 1
+          fi
+          echo "The scoped Roslyn gate rejected CA2200 violations in both approved Vector source globs."
+
+      - name: Build evidence manifest CLI
+        shell: bash
+        run: |
+          if ! dotnet build adversarial-review/src/AdversarialReview.Cli/AdversarialReview.Cli.csproj \
+            -c Debug -f net8.0 \
+            > "$RUNNER_TEMP/evidence-cli-build.log" 2>&1; then
+            cat "$RUNNER_TEMP/evidence-cli-build.log"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/evidence-cli-build.log"
+
+      - name: Run Roslyn
+        id: roslyn
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/roslyn-evidence"
+          dotnet build SqlScriptDom/Microsoft.SqlServer.TransactSql.ScriptDom.csproj \
+            -c Debug -f net8.0 \
+            -p:EnableNETAnalyzers=true \
+            -p:AnalysisLevel=latest \
+            -p:RunAnalyzers=true \
+            -p:ErrorLog="$RUNNER_TEMP/roslyn-evidence/roslyn.sarif" \
+            --verbosity normal
+
+      - name: Describe Roslyn evidence
+        if: ${{ always() && steps.roslyn.outcome != 'skipped' }}
+        run: >-
+          dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli --
+          manifest "${{ runner.temp }}/roslyn-evidence" roslyn independent
+          "${{ steps.roslyn.outcome == 'success' && 'passed' || 'failed' }}"
+
+      - name: Upload Roslyn evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: roslyn-independent-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/roslyn-evidence/
+          if-no-files-found: warn
+
+      - name: Install pinned Semgrep
+        id: semgrep-install
+        if: ${{ always() && steps.roslyn.outcome != 'skipped' }}
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/semgrep-venv"
+          "$RUNNER_TEMP/semgrep-venv/bin/python" -m pip install --disable-pip-version-check semgrep==1.184.0
+
+      - name: Run Semgrep
+        id: semgrep
+        if: ${{ always() && steps.semgrep-install.outcome == 'success' }}
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/semgrep-evidence"
+          "$RUNNER_TEMP/semgrep-venv/bin/semgrep" scan \
+            --config .semgrep.yml \
+            --sarif \
+            --output "$RUNNER_TEMP/semgrep-evidence/semgrep.sarif" \
+            --error
+
+      - name: Describe Semgrep evidence
+        if: ${{ always() && steps.semgrep.outcome != 'skipped' }}
+        run: >-
+          dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli --
+          manifest "${{ runner.temp }}/semgrep-evidence" semgrep independent
+          "${{ steps.semgrep.outcome == 'success' && 'passed' || 'failed' }}"
+
+      - name: Upload Semgrep evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: semgrep-independent-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/semgrep-evidence/
+          if-no-files-found: warn
+
+      - name: Publish static-analysis summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Static analysis"
+            echo
+            echo "- Commit: \`${{ github.event.pull_request.head.sha }}\`"
+            echo "- Roslyn: ${{ steps.roslyn.outcome }}"
+            echo "- Semgrep installation: ${{ steps.semgrep-install.outcome }}"
+            echo "- Semgrep: ${{ steps.semgrep.outcome }}"
+            echo "- Run: \`${{ github.run_id }}\`, attempt \`${{ github.run_attempt }}\`"
+            echo "- SHA-bound Roslyn and Semgrep manifests are published as separate artifacts."
+          } >> "$GITHUB_STEP_SUMMARY"

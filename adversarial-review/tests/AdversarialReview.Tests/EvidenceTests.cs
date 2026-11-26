@@ -41,6 +41,29 @@ public sealed class EvidenceTests
     }
 
     [TestMethod]
+    public void ManifestAcceptsPreparationAndStaticAnalysisChecks()
+    {
+        foreach (string check in new[] { "preparation", "static-analysis" })
+        {
+            var manifest = EvidenceManifest.Create(directory, identity, check, "ubuntu", "passed");
+            Assert.AreEqual(check, manifest.Check);
+        }
+    }
+
+    [TestMethod]
+    public void ManifestNormalizesKnownRunnerPlatformsAndRejectsUnknownOnes()
+    {
+        var ubuntuManifest = EvidenceManifest.Create(directory, identity, "static-analysis", "ubuntu-latest", "passed");
+        Assert.AreEqual("ubuntu", ubuntuManifest.Platform);
+
+        var windowsManifest = EvidenceManifest.Create(directory, identity, "foundation", "windows-latest", "passed");
+        Assert.AreEqual("windows", windowsManifest.Platform);
+
+        Assert.ThrowsException<ContractException>(() =>
+            EvidenceManifest.Create(directory, identity, "test", "macos-latest", "passed"));
+    }
+
+    [TestMethod]
     public void TamperingUnexpectedFilesAndDuplicatePathsAreRejected()
     {
         var manifest = EvidenceManifest.Create(directory, identity, "test", "ubuntu", "passed");

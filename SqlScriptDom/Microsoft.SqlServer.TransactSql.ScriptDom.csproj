@@ -7,6 +7,8 @@
 
   <PropertyGroup>
     <SQLDOM>true</SQLDOM>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
     <CsGenIntermediateOutputPath Condition=" '$(CsGenIntermediateOutputPath)' =='' ">$(BaseIntermediateOutputPath)AnyCPU\$(Configuration)\$(TargetFramework)\$(MSBuildProjectFile)\</CsGenIntermediateOutputPath>
     <OutputErrorInLexerParserCompile>false</OutputErrorInLexerParserCompile>
     <SQLSCRIPTDOM Condition="'$(SQLSCRIPTDOM)' == ''">$(MsBuildThisFileDirectory.TrimEnd('\'))</SQLSCRIPTDOM>
