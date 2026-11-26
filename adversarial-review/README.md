@@ -295,7 +295,7 @@ matrices and build/test commands while publishing raw build logs and TRX results
 including failures where output is available. Drafts are skipped; ready-for-review
 events start validation. [Foundation validation](../.github/workflows/adversarial-review-validation.yml)
 runs the offline tool tests on Windows and Ubuntu, without model credentials or PR
-write permission. Its enforced suite total is 184, including runner-platform alias
+write permission. Its enforced suite total is 197, including runner-platform alias
 coverage for evidence manifests. Artifacts currently use the repository's existing
 retention setting; the team must approve a retention policy before live review.
 
