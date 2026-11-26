@@ -3,12 +3,8 @@
 //         Copyright (c) Microsoft Corporation.  All rights reserved.
 // </copyright>
 //------------------------------------------------------------------------------
-
-
-
 namespace Microsoft.SqlServer.TransactSql.ScriptDom
 {
-    
     internal class VectorMetricTypeHelper : OptionsHelper<VectorMetricType>
     {
         private VectorMetricTypeHelper()
@@ -18,6 +14,6 @@ namespace Microsoft.SqlServer.TransactSql.ScriptDom
             AddOptionMapping(VectorMetricType.Euclidean, "'" + CodeGenerationSupporter.Euclidean + "'");
         }
 
-        public static readonly VectorMetricTypeHelper Instance = new VectorMetricTypeHelper();
+        internal static readonly VectorMetricTypeHelper Instance = new VectorMetricTypeHelper();
     }
 }
