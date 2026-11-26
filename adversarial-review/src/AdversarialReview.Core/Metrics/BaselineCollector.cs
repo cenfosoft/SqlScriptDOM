@@ -11,7 +11,7 @@ public sealed class BaselineCollector(GitHubBaselineClient client)
             throw new ArgumentOutOfRangeException(nameof(months));
         }
 
-        RepositorySnapshot snapshot = await client.FetchSnapshotAsync(owner, repository, cancellationToken);
+        RepositorySnapshot snapshot = await client.FetchSnapshotAsync(owner, repository, months, cancellationToken);
         return BaselineCalculator.Calculate(snapshot, months);
     }
 }

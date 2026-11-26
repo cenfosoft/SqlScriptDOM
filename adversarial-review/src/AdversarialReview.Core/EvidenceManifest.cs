@@ -18,6 +18,12 @@ public sealed record EvidenceManifest(
 
     public static EvidenceManifest Create(string directory, EvidenceIdentity identity, string check, string platform, string conclusion)
     {
+        platform = platform switch
+        {
+            "windows-latest" => "windows",
+            "ubuntu-latest" => "ubuntu",
+            _ => platform
+        };
         List<EvidenceFile> files = [];
         string root = Path.GetFullPath(directory);
         RejectLink(root);

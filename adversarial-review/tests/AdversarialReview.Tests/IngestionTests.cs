@@ -99,35 +99,66 @@ public sealed class IngestionTests
         public Dictionary<long, byte[]> Archives { get; } = [];
         public Uri? Redirect { get; set; }
 
-        public EvidenceHandler(bool complete = true)
+        public EvidenceHandler(bool complete = true, string? missingAnalyzerArtifact = null)
         {
             int id = 1;
+            bool analysisJobAdded = false;
             foreach ((string check, string platform) in CheckPolicy.Required)
             {
-                if (!complete && platform == "independent") continue;
                 string os = platform == "independent" ? platform : platform == "windows" ? "windows-latest" : "ubuntu-latest";
-                Artifacts.Add(new JsonObject
+                string stepName = check == "build" ? "Build" : check == "test"
+                    ? platform == "windows" ? "Run tests Windows" : "Run tests Linux"
+                    : check == "semgrep" ? "Run Semgrep" : "Run Roslyn";
+                if (platform == "independent")
                 {
-                    ["id"] = id, ["name"] = $"{check}-{os}-{FoundationTests.Sha}-2",
-                    ["expired"] = false, ["size_in_bytes"] = 1000,
-                    ["workflow_run"] = new JsonObject
+                    if (!analysisJobAdded)
                     {
-                        ["id"] = 70, ["repository_id"] = 1, ["head_repository_id"] = 2, ["head_sha"] = FoundationTests.Sha
+                        Jobs.Add(new JsonObject
+                        {
+                            ["name"] = "static-analysis",
+                            ["run_id"] = 70, ["status"] = "completed", ["conclusion"] = "success",
+                            ["steps"] = new JsonArray(
+                                new JsonObject
+                                {
+                                    ["name"] = "Run Semgrep", ["status"] = "completed", ["conclusion"] = "success"
+                                },
+                                new JsonObject
+                                {
+                                    ["name"] = "Run Roslyn", ["status"] = "completed", ["conclusion"] = "success"
+                                })
+                        });
+                        analysisJobAdded = true;
                     }
-                });
-                Jobs.Add(new JsonObject
+                }
+                else
                 {
-                    ["name"] = platform == "independent" ? check : $"{check} ({os})",
-                    ["run_id"] = 70, ["status"] = "completed", ["conclusion"] = "success",
-                    ["steps"] = new JsonArray(new JsonObject
+                    Jobs.Add(new JsonObject
                     {
-                        ["name"] = check == "build" ? "Build" : check == "test"
-                            ? platform == "windows" ? "Run tests Windows" : "Run tests Linux"
-                            : check == "semgrep" ? "Run Semgrep" : "Run Roslyn",
-                        ["status"] = "completed", ["conclusion"] = "success"
-                    })
-                });
-                Archives[id++] = Zip(check, platform);
+                        ["name"] = $"{check} ({os})",
+                        ["run_id"] = 70, ["status"] = "completed", ["conclusion"] = "success",
+                        ["steps"] = new JsonArray(new JsonObject
+                        {
+                            ["name"] = stepName, ["status"] = "completed", ["conclusion"] = "success"
+                        })
+                    });
+                }
+
+                bool omitArtifact = !complete && platform == "independent"
+                    || missingAnalyzerArtifact == check;
+                if (!omitArtifact)
+                {
+                    Artifacts.Add(new JsonObject
+                    {
+                        ["id"] = id, ["name"] = $"{check}-{os}-{FoundationTests.Sha}-2",
+                        ["expired"] = false, ["size_in_bytes"] = 1000,
+                        ["workflow_run"] = new JsonObject
+                        {
+                            ["id"] = 70, ["repository_id"] = 1, ["head_repository_id"] = 2, ["head_sha"] = FoundationTests.Sha
+                        }
+                    });
+                    Archives[id] = Zip(check, platform);
+                }
+                id++;
             }
         }
 
@@ -172,13 +203,45 @@ public sealed class IngestionTests
     }
 
     [DataTestMethod]
+    [DataRow("semgrep")]
+    [DataRow("roslyn")]
+    public async Task MissingOneCombinedAnalyzerArtifactRemainsBlocking(string check)
+    {
+        using var handler = new EvidenceHandler(missingAnalyzerArtifact: check);
+        using HttpClient http = new(handler);
+
+        IngestedEvidence result = await new GitHubReviewEvidence(AdmissionTests.Api(http), http)
+            .CollectAsync(Admission(), CancellationToken.None);
+
+        Assert.AreEqual(5, result.Checks.Length);
+        StringAssert.Contains(string.Join(" ", result.Blockers), $"Required {check}/independent evidence");
+    }
+
+    [TestMethod]
+    public async Task CombinedAnalyzerArtifactMustContainItsOwnManifestIdentity()
+    {
+        using var handler = new EvidenceHandler();
+        JsonObject semgrepArtifact = handler.Artifacts.OfType<JsonObject>()
+            .Single(artifact => artifact["name"]!.GetValue<string>().StartsWith("semgrep-independent-", StringComparison.Ordinal));
+        long artifactId = semgrepArtifact["id"]!.GetValue<int>();
+        handler.Archives[artifactId] = Zip("roslyn", "independent");
+        using HttpClient http = new(handler);
+
+        await Assert.ThrowsExceptionAsync<ContractException>(() =>
+            new GitHubReviewEvidence(AdmissionTests.Api(http), http).CollectAsync(Admission(), CancellationToken.None));
+    }
+
+    [DataTestMethod]
     [DataRow("expired")]
     [DataRow("size")]
     [DataRow("sha")]
     [DataRow("repository")]
     [DataRow("job")]
     [DataRow("duplicate")]
+    [DataRow("duplicate-analysis")]
     [DataRow("skipped-step")]
+    [DataRow("skipped-semgrep")]
+    [DataRow("skipped-roslyn")]
     public async Task UntrustedArtifactMetadataFailsClosed(string mutation)
     {
         using var handler = new EvidenceHandler();
@@ -190,7 +253,17 @@ public sealed class IngestionTests
             case "repository": handler.Artifacts[0]!["workflow_run"]!["repository_id"] = 99; break;
             case "job": handler.Jobs[0]!["conclusion"] = "failure"; break;
             case "duplicate": handler.Jobs.Add(handler.Jobs[0]!.DeepClone()); break;
+            case "duplicate-analysis":
+                handler.Jobs.Add(handler.Jobs.OfType<JsonObject>()
+                    .Single(job => job["name"]!.GetValue<string>() == "static-analysis").DeepClone());
+                break;
             case "skipped-step": handler.Jobs[0]!["steps"]![0]!["conclusion"] = "skipped"; break;
+            case "skipped-semgrep":
+            case "skipped-roslyn":
+                JsonObject analysisJob = handler.Jobs.OfType<JsonObject>()
+                    .Single(job => job["name"]!.GetValue<string>() == "static-analysis");
+                analysisJob["steps"]![mutation == "skipped-semgrep" ? 0 : 1]!["conclusion"] = "skipped";
+                break;
         }
         using HttpClient http = new(handler);
         await Assert.ThrowsExceptionAsync<ContractException>(() =>

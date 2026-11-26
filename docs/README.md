@@ -7,6 +7,9 @@ This directory contains the project documentation for an AI-assisted, adversaria
 - [Adversarial Reviewer Agent Specification](adversarial-reviewer-agent-spec.md) — the source of truth for project scope, architecture, requirements, risk controls, delivery phases, acceptance criteria, and open decisions.
 - [Phase 1 Plan and Progress](phase-1-progress.md) — the implementation plan, workstream status, decision log, risks, and stakeholder questionnaire for the report-only foundation.
 - [C4 Architecture Model](architecture/workspace.dsl) — the architecture model expressed as Structurizr DSL.
+- [Phase 1 Workflow](architecture/phase-1-workflow.mmd) — a Mermaid flow diagram separating current preparation/report-only behavior from future gated inference and human merge review.
+- [Repository Governance](repository-governance.md) — verified `main` branch protection, review policy, Issues, and milestone state.
+- [AI Usage and Prompt Traceability](ai-usage.md) — tools and model candidates actually used or considered, prompt catalog references, and commit co-authorship evidence.
 - [Phase 1 Tooling and Operations](../adversarial-review/README.md) — .NET validation commands, contract compatibility, baseline collection, and activation prerequisites.
 
 ## Repository Context

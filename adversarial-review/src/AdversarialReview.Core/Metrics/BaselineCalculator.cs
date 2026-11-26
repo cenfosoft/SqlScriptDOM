@@ -62,6 +62,10 @@ public static class BaselineCalculator
                 exclusion = "InvalidPullRequestState";
                 uncertain = true;
             }
+            else if (pr.UpdatedAt < start)
+            {
+                exclusion = "OutsideReadinessWindow";
+            }
             else if (pr.TimelineStatus != TimelineStatus.Complete)
             {
                 exclusion = $"Timeline{pr.TimelineStatus}";
@@ -87,7 +91,9 @@ public static class BaselineCalculator
             }
 
             DateTimeOffset end = pr.MergedAt ?? snapshot.ObservedAt;
-            var entry = new BaselinePullRequest(pr.Number, ready!.Value, end, (end - ready.Value).TotalHours);
+            string repositoryPath = string.Join('/', snapshot.Repository.Split('/').Select(Uri.EscapeDataString));
+            var entry = new BaselinePullRequest(pr.Number, $"https://github.com/{repositoryPath}/pull/{pr.Number}",
+                ready!.Value, end, (end - ready.Value).TotalHours);
             (pr.MergedAt is null ? open : merged).Add(entry);
         }
 

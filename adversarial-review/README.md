@@ -158,11 +158,19 @@ requires a finite-timeout client with automatic redirects disabled.
 
 `GitHubReviewEvidence` lists the admitted run's artifacts and exact attempt's jobs.
 Required artifacts are named `<check>-<os>-<headSha>-<attempt>`, where OS is
-`windows-latest`, `ubuntu-latest`, or `independent`. Jobs must be successful
-`build (<os>)`/`test (<os>)` or independent `semgrep`/`roslyn`; required steps are
-`Build`, `Run tests Windows`, `Run tests Linux`, `Run Semgrep`, and `Run Roslyn`.
-Analyzer jobs/artifacts do not exist until the team supplies policy; missing evidence
-remains a blocker, never a synthetic pass.
+`windows-latest`, `ubuntu-latest`, or `independent`. Build/test jobs are
+`build (<os>)`/`test (<os>)`. The combined `static-analysis` job provides distinct
+`semgrep-independent-<headSha>-<attempt>` and
+`roslyn-independent-<headSha>-<attempt>` artifacts, each with its own SHA-bound
+manifest. The consumer verifies both artifacts against the same successful
+`static-analysis` job and the distinct successful `Run Semgrep` and `Run Roslyn`
+steps. Missing evidence remains a blocker, never a synthetic pass.
+
+The Roslyn policy treats analyzer diagnostics as errors only in the two Vector
+source globs selected in `.editorconfig`; it does not promote legacy warnings
+outside those paths. CI injects a temporary CA2200 violation under the approved
+scope and requires the same build command to fail on that diagnostic before
+running the clean analysis build.
 
 Downloads are bounded at 55 MiB compressed; manifest/raw limits additionally apply.
 ZIPs are inspected in memory, not extracted or executed. Absolute/traversal/device
@@ -217,15 +225,18 @@ starting point. Prompt-injection resilience still needs live pilot evaluation.
 ## Lead-time baseline
 
 ```text
-dotnet run --project adversarial-review/src/AdversarialReview.Cli -- baseline cenfosoft SqlScriptDOM baseline.json 6 100
+dotnet run --project adversarial-review/src/AdversarialReview.Cli -- baseline 6 100 phase1-human-nondraft-merged-only baseline.json baseline.md cenfosoft/SqlScriptDOM microsoft/SqlScriptDOM
 ```
 
 Supply a read-only GitHub API token using `GH_TOKEN`, never a command-line argument.
-The final parameters are trailing calendar months (default 6) and the per-resource
-pagination cap (default 100). Every request has a 30-second timeout and collection
-has a ten-minute cancellation limit. Outputs are new files; existing files are not
-overwritten. No paid model API is used. For a small sample, rerun into a different
-file with a longer month range; inspect completeness before comparing results.
+The arguments explicitly select the trailing calendar-month window, per-resource
+pagination cap, approved exclusion profile, JSON and Markdown outputs, and one or
+more `owner/repository` sources. The comparison must include both `cenfosoft/SqlScriptDOM` and
+`microsoft/SqlScriptDOM`; both are fetched read-only. Every request has a 30-second
+timeout and the combined collection has a ten-minute cancellation limit. Outputs
+are new files; existing files are not overwritten. No paid model API is used.
+The command exits with code **3** if either repository is incomplete; inspect
+diagnostics before using or comparing its cohorts.
 
 The command collects a **current-state** snapshot, not a reconstruction of arbitrary
 historical PR states. It scans PRs regardless of creation date so an older PR readied
@@ -233,20 +244,40 @@ recently is not lost. Timelines establish the first ready-for-review event; crea
 is used only when a complete timeline has no draft/readiness transitions. Ambiguous
 or unavailable timelines are diagnosed, not guessed.
 
-- Merged human PRs: ready-for-review to merge, with merged-only count/median hours.
-- Open non-draft human PRs: ready-for-review to observation, as a separate censored
-  cohort. Do not treat open age as completed lead time.
+- Merged human PRs: first ready-for-review (or creation if initially non-draft) to
+  `merged_at`, with merged-only count and median elapsed hours.
+- Open non-draft human PRs: the same start event to the repository extraction time,
+  reported separately as a right-censored cohort. Do not treat open age as completed
+  lead time.
+- The inclusive trailing calendar-month window is applied to the start event, not
+  `created_at`; timestamps are compared as UTC instants and durations are elapsed
+  hours. Fork and upstream extraction timestamps can differ slightly.
 - Excluded: bots, currently draft PRs, closed-unmerged PRs, and readiness outside
-  the trailing window. Human documentation-only PRs remain in scope.
+  the window. Human dependency and documentation-only PRs remain in scope; no
+  topic or label exclusions are applied. Unknown/malformed author or PR state,
+  duplicate PRs, incomplete timelines, and ambiguous histories make the
+  collection incomplete and are diagnosed, not inferred.
+- PRs last updated before the window are not sent a timeline request: their
+  readiness cannot occur after their last update. The collector still scans PR
+  list pages to find older PRs updated within the window.
+- GitHub rate-limit responses (`429`, or `403` with zero remaining quota) are
+  reported as `RateLimited`, mark the collection incomplete, and produce exit
+  code **3**. The client does not retry blindly or claim a complete sample.
 
-The JSON records observation/range, durations, exclusions, limitations, and diagnostics.
-`isComplete: false` and exit code **3** indicate truncated, unavailable, malformed,
-or inconsistent evidence; partial cohorts must not be presented as a complete baseline.
+The JSON records the collection policy, extraction timestamp, both source repositories,
+per-source observation/range, PR numbers with full repository provenance, durations,
+cohort counts, exclusions, limitations, and diagnostics. The Markdown report provides
+the comparable per-repository summary and separate merged/open tables. A median is
+unavailable when there are no eligible merges. The report does not set a minimum sample
+threshold or improvement target; both require Product Owner approval. Never claim
+causality or improvement from an incomplete, open, or otherwise non-comparable sample.
 Argument/input failures exit **1**, and command syntax errors exit **2**.
 Snapshots can be recalculated offline through `BaselineCalculator.Calculate`.
-Raw snapshots contain PR numbers and timestamps, not source, prompts, or credentials.
-Storage, retention, and access policy still require team approval; do not automatically
-commit or upload a raw dataset.
+The report contains public PR numbers, URLs, and timestamps, not author names,
+source, prompts, or credentials. Raw API snapshots are not emitted. Offline
+recalculation requires a separately authorized saved `RepositorySnapshot` passed to
+`BaselineCalculator.Calculate`. Storage, retention, and access policy still require
+team approval; do not automatically commit or upload a raw dataset.
 
 ## Deterministic evidence
 
@@ -264,15 +295,16 @@ matrices and build/test commands while publishing raw build logs and TRX results
 including failures where output is available. Drafts are skipped; ready-for-review
 events start validation. [Foundation validation](../.github/workflows/adversarial-review-validation.yml)
 runs the offline tool tests on Windows and Ubuntu, without model credentials or PR
-write permission. Its enforced suite total is 184, including runner-platform alias
+write permission. Its enforced suite total is 197, including runner-platform alias
 coverage for evidence manifests. Artifacts currently use the repository's existing
 retention setting; the team must approve a retention policy before live review.
 
 Trusted consumption must verify workflow provenance and safe archive extraction
 **before** parsing a manifest; checksum validation alone is insufficient. Semgrep
-and Roslyn evidence remain unavailable until team-owned policies are supplied.
-Missing outputs or a failed manifest step are failures/incomplete evidence, never
-successful deterministic checks.
+and scoped Roslyn evidence are published separately by the combined analysis job;
+the manifests establish file integrity and identity, not correctness of contributor
+code or analyzer policy. Missing outputs or a failed manifest step are
+failures/incomplete evidence, never successful deterministic checks.
 
 ## Bounded reviewer inputs and outputs
 
