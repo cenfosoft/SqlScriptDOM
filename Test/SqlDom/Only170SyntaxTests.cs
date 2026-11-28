@@ -398,6 +398,108 @@ namespace SqlStudio.Tests.UTSqlScriptDom
         [TestMethod]
         [Priority(0)]
         [SqlStudioTestCategory(Category.UnitTest)]
+        public void Hu05VectorAstGeneratorReparseIsIdempotent()
+        {
+            VerifyHu05RoundTrip(
+                new TSql160Parser(true),
+                SqlVersion.Sql160,
+                "Baselines160",
+                "VectorFunctionTests160.sql");
+
+            VerifyHu05RoundTrip(
+                new TSql170Parser(true),
+                SqlVersion.Sql170,
+                "Baselines170",
+                "VectorFunctionTests170.sql");
+            VerifyHu05RoundTrip(
+                new TSql170Parser(true),
+                SqlVersion.Sql170,
+                "Baselines170",
+                "VectorIndexTests170.sql");
+            VerifyHu05RoundTrip(
+                new TSql170Parser(true),
+                SqlVersion.Sql170,
+                "Baselines170",
+                "VectorSearchApproximateTests170.sql");
+            VerifyHu05RoundTrip(
+                new TSql170Parser(true),
+                SqlVersion.Sql170,
+                "Baselines170",
+                "VectorSearchCrossApplyTests170.sql");
+            VerifyHu05RoundTrip(
+                new TSql170Parser(true),
+                SqlVersion.Sql170,
+                "Baselines170",
+                "VectorSearchOptionalTopNTests170.sql");
+            VerifyHu05RoundTrip(
+                new TSql170Parser(true),
+                SqlVersion.Sql170,
+                "Baselines170",
+                "VectorTypeSecondParameterTests170.sql");
+        }
+
+        private static void VerifyHu05RoundTrip(
+            TSqlParser parser,
+            SqlVersion sqlVersion,
+            string baselineFolder,
+            string scriptFilename)
+        {
+            string source = ParserTestUtils.GetStringFromResource(
+                GlobalConstants.TestScriptsNameSpace + "." + scriptFilename);
+
+            TSqlFragment originalAst = ParserTestUtils.ParseString(
+                parser,
+                source,
+                out IList<ParseError> parseErrors);
+
+            ParserTestUtils.LogErrors(parseErrors, source);
+            Assert.AreEqual(0, parseErrors.Count, scriptFilename + ": source must parse without errors.");
+            Assert.IsNotNull(originalAst, scriptFilename + ": source must produce an AST.");
+
+            SqlScriptGenerator generator = ParserTestUtils.CreateScriptGen(sqlVersion);
+            generator.GenerateScript(
+                originalAst,
+                out string generatedScript,
+                out IList<ParseError> generationErrors);
+
+            ParserTestUtils.LogErrors(generationErrors, generatedScript);
+            Assert.AreEqual(0, generationErrors.Count, scriptFilename + ": generation must not produce versioning errors.");
+
+            TSqlFragment reparsedAst = ParserTestUtils.ParseString(
+                parser,
+                generatedScript,
+                out IList<ParseError> reparseErrors);
+
+            ParserTestUtils.LogErrors(reparseErrors, generatedScript);
+            Assert.AreEqual(0, reparseErrors.Count, scriptFilename + ": generated script must re-parse without errors.");
+            Assert.IsNotNull(reparsedAst, scriptFilename + ": generated script must produce an AST.");
+
+            generator.GenerateScript(
+                reparsedAst,
+                out string regeneratedScript,
+                out IList<ParseError> regenerationErrors);
+
+            ParserTestUtils.LogErrors(regenerationErrors, regeneratedScript);
+            Assert.AreEqual(0, regenerationErrors.Count, scriptFilename + ": regeneration must not produce versioning errors.");
+
+            Assert.AreEqual(
+                NormalizeHu05Script(generatedScript),
+                NormalizeHu05Script(regeneratedScript),
+                scriptFilename + ": AST -> generator -> re-parser must be idempotent.");
+
+            ParserTestOutput expectedResult = new ParserTestOutput(baselineFolder);
+            expectedResult.VerifyResult(scriptFilename, generatedScript, new List<ParseError>());
+            expectedResult.VerifyResult(scriptFilename, regeneratedScript, new List<ParseError>());
+        }
+
+        private static string NormalizeHu05Script(string script)
+        {
+            return script.Replace("\r\n", "\n").Replace("\r", "\n").Trim();
+        }
+
+        [TestMethod]
+        [Priority(0)]
+        [SqlStudioTestCategory(Category.UnitTest)]
         public void TestExternalModelModelTypeVisitor()
         {
             string sql = "CREATE EXTERNAL MODEL simple_model WITH (LOCATION = '/models/simple', API_FORMAT = 'OpenAI', MODEL_TYPE = EMBEDDINGS, MODEL = 'gpt-3.5-turbo');";
