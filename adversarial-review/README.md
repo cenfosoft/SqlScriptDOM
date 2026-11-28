@@ -407,7 +407,9 @@ omit `--dry-run`. The command exits 3 when the assessment is not `assessed`. The
 manual [`jev-risk-smoke`](../.github/workflows/jev-risk-smoke.yml) workflow runs
 the same synthetic check in the protected `adversarial-review` environment with
 the `JEV_API_KEY` environment secret; `workflow_dispatch` is available only after
-the workflow exists on the default branch.
+the workflow exists on the default branch. See the
+[JEV how-to](../docs/jev-risk-assessment.md) for setup, configuration locations,
+and how the assessment connects to the review flow.
 
 ### Current operating mode
 
