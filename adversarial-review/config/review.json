@@ -1,17 +1,21 @@
 {
   "schemaVersion": "1.0",
-  "enabled": false,
+  "enabled": true,
   "authorizationLabel": "adversarial-review:run",
   "authorizedActors": ["allancascante"],
   "environment": "adversarial-review",
   "rounds": 3,
   "limits": {
-    "maxInputTokens": null,
-    "maxOutputTokens": null,
-    "timeoutSeconds": null,
-    "maxRetries": null,
-    "perAuthorizationUsd": null,
-    "monthlyUsd": null
+    "maxInputTokens": 60000,
+    "maxOutputTokens": 8000,
+    "timeoutSeconds": 120,
+    "maxRetries": 1,
+    "perAuthorizationUsd": 1,
+    "monthlyUsd": 20
+  },
+  "copilotBilling": {
+    "nanoUnitsPerCredit": 1000000000,
+    "usdPerCredit": 0.01
   },
   "models": [
     { "provider": "github-copilot", "model": "gpt-5.4-mini", "enabled": true },

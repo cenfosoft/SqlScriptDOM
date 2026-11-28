@@ -23,6 +23,14 @@
         "monthlyUsd": { "type": ["number", "null"], "exclusiveMinimum": 0 }
       }
     },
+    "copilotBilling": {
+      "type": "object", "additionalProperties": false,
+      "required": ["nanoUnitsPerCredit", "usdPerCredit"],
+      "properties": {
+        "nanoUnitsPerCredit": { "type": "number", "exclusiveMinimum": 0 },
+        "usdPerCredit": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
     "models": {
       "type": "array", "maxItems": 100,
       "items": {

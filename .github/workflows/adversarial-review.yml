@@ -1,0 +1,127 @@
+name: adversarial-review
+
+# Trusted, label-triggered review. Runs the code from the default branch only; it reads
+# the PR exclusively through the GitHub API and never checks out or executes PR code.
+on:
+  pull_request_target:
+    types: [labeled]
+
+permissions:
+  contents: write       # push the spend ledger branch and merge through auto-merge
+  pull-requests: write  # audit comment, labels, and auto-merge
+  issues: write         # labels are issue labels
+  actions: read         # validation runs, artifacts, and environment approvals
+
+# One run at a time across all PRs so the monthly budget is enforced against a single ledger.
+concurrency:
+  group: adversarial-review-ledger
+  cancel-in-progress: false
+
+env:
+  LEDGER_BRANCH: adversarial-review-ledger
+
+jobs:
+  review:
+    if: >-
+      github.event.label.name == 'adversarial-review:run' &&
+      github.actor == 'allancascante' &&
+      !github.event.pull_request.draft &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    environment: adversarial-review
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Initialize review evidence
+        shell: bash
+        run: mkdir -p "$RUNNER_TEMP/adversarial-review"
+      - name: Build trusted review CLI
+        shell: bash
+        run: |
+          dotnet build adversarial-review/src/AdversarialReview.Cli/AdversarialReview.Cli.csproj -c Debug -f net8.0 \
+            > "$RUNNER_TEMP/adversarial-review/cli-build.log" 2>&1 || { cat "$RUNNER_TEMP/adversarial-review/cli-build.log"; exit 1; }
+          cat "$RUNNER_TEMP/adversarial-review/cli-build.log"
+      - name: Restore spend ledger
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          mkdir -p "$RUNNER_TEMP/ledger" && cd "$RUNNER_TEMP/ledger"
+          git init -q && git remote add origin "https://github.com/${{ github.repository }}.git"
+          if git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" \
+               ls-remote --exit-code --heads origin "$LEDGER_BRANCH" > /dev/null; then
+            git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" fetch -q --depth=1 origin "$LEDGER_BRANCH"
+            git checkout -q -B "$LEDGER_BRANCH" FETCH_HEAD
+          else
+            echo "No ledger branch yet; starting an empty ledger."
+            git checkout -q --orphan "$LEDGER_BRANCH"
+          fi
+      - name: Run adversarial review and risk assessment
+        id: review
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          JEV_API_KEY: ${{ secrets.JEV_API_KEY }}
+        run: |
+          set -o pipefail
+          dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- run-review \
+            adversarial-review/config/review.json \
+            adversarial-review/config/risk-rubric.json \
+            adversarial-review/config/reviewer-prompt.md \
+            .github/copilot-instructions.md \
+            "$RUNNER_TEMP/ledger/spend-ledger.db" \
+            "$RUNNER_TEMP/adversarial-review" 2>&1 | tee "$RUNNER_TEMP/adversarial-review/review.log"
+      # Always persist spend, including failed or cancelled reviews; losing it on a runner crash is accepted.
+      - name: Persist spend ledger
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd "$RUNNER_TEMP/ledger"
+          shopt -s nullglob
+          files=(spend-ledger.db*)
+          if [ ${#files[@]} -eq 0 ]; then echo "No ledger changes to persist."; exit 0; fi
+          git add -- "${files[@]}"
+          if git diff --cached --quiet; then echo "Ledger unchanged."; exit 0; fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Record adversarial review spend for PR #${{ github.event.pull_request.number }} (run ${{ github.run_id }}, attempt ${{ github.run_attempt }})"
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" push -q origin "HEAD:$LEDGER_BRANCH"
+      - name: Create SHA-bound review evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          case "${{ steps.review.outcome }}" in
+            success) conclusion=passed ;;
+            cancelled) conclusion=cancelled ;;
+            skipped) conclusion=missing ;;
+            *) conclusion=failed ;;
+          esac
+          rm -rf "$RUNNER_TEMP/adversarial-review/host"
+          dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- manifest \
+            "$RUNNER_TEMP/adversarial-review" review ubuntu-latest "$conclusion"
+      - name: Publish review summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/adversarial-review/report.md" ]; then
+            cat "$RUNNER_TEMP/adversarial-review/report.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The review did not produce a report (outcome: ${{ steps.review.outcome }}). No label or merge change was made." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload review evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: adversarial-review-${{ github.repository_id }}-pr${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/adversarial-review/
+          if-no-files-found: warn

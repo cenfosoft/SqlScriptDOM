@@ -6,9 +6,14 @@ public sealed record ReviewLimits(
 
 public sealed record ModelEntry(string Provider, string Model, bool Enabled);
 
+// GitHub bills Copilot in AI credits (1 credit = USD 0.01); the SDK reports usage in nano-units of a credit.
+public sealed record CopilotBillingSettings(decimal NanoUnitsPerCredit, decimal UsdPerCredit);
+
 public sealed record ReviewConfiguration(
     string SchemaVersion, bool Enabled, string AuthorizationLabel, string[] AuthorizedActors,
-    string Environment, int? Rounds, ReviewLimits Limits, ModelEntry[] Models)
+    string Environment, int? Rounds, ReviewLimits Limits, ModelEntry[] Models,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    CopilotBillingSettings? CopilotBilling = null)
 {
     public const int MaxRounds = 3;
 
@@ -36,6 +41,9 @@ public sealed record ReviewConfiguration(
         else if (Limits.PerAuthorizationUsd > Limits.MonthlyUsd)
             errors.Add("Per-authorization spend limit exceeds the monthly limit.");
         if (!Models.Any(m => m.Enabled)) errors.Add("No model is enabled.");
+        if (Models.Any(m => m.Enabled && m.Provider == "github-copilot")
+            && CopilotBilling is not { NanoUnitsPerCredit: > 0, UsdPerCredit: > 0 })
+            errors.Add("Copilot billing conversion is unset.");
         return errors.ToArray();
     }
 }

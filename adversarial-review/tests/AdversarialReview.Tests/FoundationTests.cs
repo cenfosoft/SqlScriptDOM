@@ -25,12 +25,15 @@ public sealed class FoundationTests
         new(number, "github-models", model, "Configured order.", "1.0", 100, 20, 1000, 0.01m, "completed");
 
     [TestMethod]
-    public void ShippedConfigurationDisablesExecution()
+    public void ShippedConfigurationEnablesApprovedLimitsAndRequiresCopilotBilling()
     {
         var config = ReviewConfiguration.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "config/review.json")));
-        Assert.IsFalse(config.Enabled);
-        Assert.IsTrue(config.ExecutionBlockers().Length >= 4);
+        Assert.IsTrue(config.Enabled);
+        CollectionAssert.AreEqual(Array.Empty<string>(), config.ExecutionBlockers());
+        Assert.AreEqual(20m, config.Limits.MonthlyUsd);
+        Assert.AreEqual(0.01m, config.CopilotBilling!.UsdPerCredit);
         CollectionAssert.Contains(config.AuthorizedActors, "allancascante");
+        CollectionAssert.Contains((config with { CopilotBilling = null }).ExecutionBlockers(), "Copilot billing conversion is unset.");
     }
 
     [TestMethod]

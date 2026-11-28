@@ -23,6 +23,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Validate the PR head commit so evidence, coverage line numbers, and the audit SHA agree.
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -72,9 +74,20 @@ jobs:
         shell: pwsh
         run: |
           $log = Join-Path "${{ runner.temp }}" "test-results/ut-scriptdom-test.log"
-          dotnet test Test/SqlDom/UTSqlScriptDom.csproj -c Debug -f net8.0 --no-build --logger "trx;LogFileName=ut-scriptdom-${{ matrix.os }}.trx" --results-directory "${{ runner.temp }}/test-results" *> $log
+          # Ubuntu collects parser coverage for the risk assessment; generated parser sources are excluded.
+          $coverage = @()
+          if ('${{ matrix.os }}' -eq 'ubuntu-latest') {
+            $coverage = @('--collect', 'XPlat Code Coverage', '--',
+              'DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Include=[Microsoft.SqlServer.TransactSql.ScriptDom]*',
+              'DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByFile=**/obj/**')
+          }
+          dotnet test Test/SqlDom/UTSqlScriptDom.csproj -c Debug -f net8.0 --no-build --logger "trx;LogFileName=ut-scriptdom-${{ matrix.os }}.trx" --results-directory "${{ runner.temp }}/test-results" @coverage *> $log
           $exitCode = $LASTEXITCODE
           Get-Content -Path $log
+          # Evidence files are capped at 20 MiB; an oversized report is dropped and the risk step treats coverage as missing.
+          Get-ChildItem -Path "${{ runner.temp }}/test-results" -Recurse -Filter "coverage.cobertura.xml" -File |
+            Where-Object { $_.Length -gt 20MB } |
+            ForEach-Object { Write-Warning "Coverage report exceeds 20 MiB and was removed."; Remove-Item $_.FullName }
           if ($exitCode -ne 0) { exit $exitCode }
 
       - name: Require all 1,176 tests to pass
@@ -159,6 +172,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Validate the PR head commit so evidence, coverage line numbers, and the audit SHA agree.
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
