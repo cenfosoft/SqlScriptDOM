@@ -66,8 +66,13 @@ public static partial class ReportRenderer
         string[] secrets = (knownSecrets ?? []).Where(s => !string.IsNullOrEmpty(s))
             .OrderByDescending(s => s.Length).ToArray();
         string Safe(string text) => Escape(Redact(text, secrets));
-        StringBuilder output = new(Marker + "\n## Adversarial review (report-only)\n\n");
-        output.AppendLine("**Not a merge gate. Risk model: uncalibrated; numeric score unavailable.**\n");
+        StringBuilder output = new(Marker + "\n## Adversarial review" + (report.Risk is null ? " (report-only)" : "") + "\n\n");
+        if (report.Risk is null)
+            output.AppendLine("**Not a merge gate. Risk model: uncalibrated; numeric score unavailable.**\n");
+        else
+            output.AppendLine($"**Risk: {report.Risk.Assessment?.Classification ?? "not assessed"}. "
+                + (report.Risk.Decision.EligibleForLowRiskLabel ? "Eligible for automatic merge after required approvals." : "Human review required.")
+                + "**\n");
         output.AppendLine($"PR: {Safe(report.Run.Repository)} #{report.Run.PullRequest}");
         output.AppendLine($"Head SHA: `{Safe(report.Run.HeadSha)}`  ");
         output.AppendLine($"Trusted configuration: `{Safe(report.Run.ConfigurationSha)}`  ");
@@ -112,11 +117,42 @@ public static partial class ReportRenderer
             string tokens = $"{round.InputTokens?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}/{round.OutputTokens?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}";
             output.AppendLine($"| {round.Number} | {Safe(round.Provider)} / {Safe(round.Model)} | {round.Outcome} | {tokens} | {round.EstimatedCostUsd?.ToString(CultureInfo.InvariantCulture) ?? "unknown"} |");
         }
+        if (report.Risk is RiskSection risk) AppendRisk(output, risk, Safe);
         AppendBoundedList(output, "Blockers / follow-up", report.Blockers, Safe);
         AppendBoundedList(output, "Limitations", report.Limitations, Safe);
         if (output.Length > MaximumCommentCharacters)
             throw new ContractException("Rendered comment exceeds the safe publication limit; use the audit artifact.");
         return output.ToString().Replace("\r\n", "\n", StringComparison.Ordinal);
+    }
+
+    private static void AppendRisk(StringBuilder output, RiskSection risk, Func<string, string> safe)
+    {
+        output.AppendLine($"\n### Risk assessment (rubric {safe(risk.RubricVersion)})\n");
+        if (risk.Factors is RiskFactors factors && risk.Signals is RiskSignals signals)
+        {
+            string coverage = signals.InstrumentableAddedLines is > 0
+                ? $"{signals.CoveredAddedLines}/{signals.InstrumentableAddedLines} added executable lines"
+                : "no added executable lines";
+            output.AppendLine("| Factor | Value | Level |\n|---|---|---|");
+            output.AppendLine($"| Changed code lines | +{signals.AddedCodeLines} / -{signals.DeletedCodeLines} | {factors.ChangedLines} |");
+            output.AppendLine($"| Added-line coverage | {coverage} | {factors.Coverage} |");
+            output.AppendLine($"| Adversarial findings | {signals.LowFindings} low, {signals.MediumFindings} medium | {factors.AdversarialFindings} |");
+            output.AppendLine($"| Static-analysis warnings in changed files | {signals.NewStaticWarnings} | {factors.StaticWarnings} |");
+            output.AppendLine($"| Parser round-trip tests | {(signals.HasIntegrationTests switch { true => "present", false => "absent", null => "unknown" })} | — |");
+            output.AppendLine($"| Unresolved high/critical finding | {(signals.HasUnresolvedHighOrCriticalFinding ? "yes (blocks merge)" : "no")} | — |");
+        }
+        if (risk.Assessment is JevRiskAssessment assessment)
+        {
+            string detail = assessment.Status == "assessed"
+                ? $"{assessment.Classification} (confidence {assessment.Confidence?.ToString(CultureInfo.InvariantCulture)}), model {safe(assessment.AnsweredModel ?? assessment.RequestedModel)}, tokens {assessment.InputTokens}/{assessment.OutputTokens}"
+                : $"{assessment.Status}: {safe(assessment.Reason ?? "no reason recorded")}";
+            output.AppendLine($"\nJEV assessment: {detail}");
+        }
+        else
+            output.AppendLine("\nJEV assessment: not requested because required inputs were missing.");
+        foreach (string missing in risk.Missing) output.AppendLine("- Missing input: " + safe(missing));
+        foreach (string reason in risk.Decision.Reasons) output.AppendLine("- " + safe(reason));
+        output.AppendLine($"\nLabel: {safe(risk.Label ?? "none")} ({risk.LabelOutcome}); automatic merge: {risk.AutoMergeOutcome}.");
     }
 
     private static void AppendBoundedList(StringBuilder output, string title, string[] values, Func<string, string> safe)
