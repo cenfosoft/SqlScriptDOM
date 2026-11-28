@@ -90,6 +90,9 @@ namespace Microsoft.SqlServer.TransactSql.ScriptDom
                 {
                     errors.Add(p);
                 }
+
+                Sql170ExpressionVisitor expressionVisitor = new Sql170ExpressionVisitor(errors);
+                result.Accept(expressionVisitor);
             }
 
             return result;
