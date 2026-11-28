@@ -85,9 +85,10 @@ public sealed class CopilotReviewProvider : IReviewProvider
             nanoUnits += checked((decimal)usage.CopilotUsage.TotalNanoAiu);
         }
         decimal cost = decimal.Ceiling(nanoUnits / billing.NanoUnitsPerCredit * billing.UsdPerCredit * 1_000_000m) / 1_000_000m;
-        if (input > request.MaxInputTokens || output > request.MaxOutputTokens || cost > request.MaximumCostUsd
-            || reply.LatencyMilliseconds < 0)
-            throw new ContractException("Copilot usage exceeded the requested bounds; retain the spend reservation.");
+        if (reply.LatencyMilliseconds < 0)
+            throw new ContractException("Copilot reported invalid request latency.");
+        if (input > int.MaxValue || output > int.MaxValue)
+            throw new ContractException("Copilot token usage exceeds the supported accounting range.");
         return new(reply.Content, checked((int)input), checked((int)output), reply.LatencyMilliseconds, cost);
     }
 

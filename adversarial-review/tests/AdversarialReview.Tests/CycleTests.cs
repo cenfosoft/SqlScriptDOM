@@ -1,4 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Microsoft.Data.Sqlite;
 
 namespace AdversarialReview.Tests;
 
@@ -151,7 +152,9 @@ public sealed class CycleTests
         Assert.AreEqual(1, provider.Requests.Count);
         Assert.AreEqual("incomplete", result.Report.Status);
         Assert.IsTrue(AuditEngine.RequiresHumanReview(result.Report));
-        StringAssert.Contains(string.Join("", result.Diagnostics), "budget exhausted");
+        Assert.AreEqual("completed", result.Report.Rounds.Single().Outcome);
+        Assert.AreEqual(10, result.Report.Rounds.Single().InputTokens);
+        StringAssert.Contains(string.Join("", result.Diagnostics), "Per-authorization budget exhausted");
     }
 
     [TestMethod]
@@ -245,14 +248,96 @@ public sealed class CycleTests
     }
 
     [TestMethod]
-    public async Task InvalidUsageBecomesUnknownBillingFailure()
+    public async Task ReportedOverrunRetainsUsageAndStopsWithoutAcceptingFindings()
     {
-        var provider = new Provider { Respond = (_, _) => Task.FromResult(new ModelResponse("[]", 2000, 5, 1, 0.1m)) };
+        Finding high = new("1.0", "HIGH-OVERBUDGET", FoundationTests.Sha, "reviewer", "security",
+            "high", 0.95m, "High issue", "Unresolved high issue.",
+            [new("file", "src/example.cs", "Relevant source evidence.", 1, 2)],
+            "Review and remediate.", "unreviewed");
+        string findings = System.Text.Json.JsonSerializer.Serialize(new[] { high }, Contracts.JsonOptions);
+        var provider = new Provider
+        {
+            Respond = (_, _) => Task.FromResult(new ModelResponse(findings, 2000, 5, 1, 0.1m))
+        };
         var ledger = new Ledger();
-        await Run(provider, ledger);
+        CycleResult result = await Run(provider, ledger);
         Assert.AreEqual(1, provider.Requests.Count);
-        Assert.AreEqual("failed", ledger.Records.Single().Outcome);
-        Assert.IsNull(ledger.Records[0].EstimatedCostUsd);
+        Assert.AreEqual("budget-exceeded", ledger.Records.Single().Outcome);
+        Assert.AreEqual(2000, ledger.Records[0].InputTokens);
+        Assert.AreEqual(0.1m, ledger.Records[0].EstimatedCostUsd);
+        Assert.AreEqual(0, result.Report.Findings.Length);
+        Assert.IsTrue(AuditEngine.RequiresHumanReview(result.Report));
+        StringAssert.Contains(string.Join("", result.Diagnostics), "actual usage was retained");
+    }
+
+    [TestMethod]
+    public async Task TokenAndCostOverrunAreRecordedInSqliteWithReservationRetained()
+    {
+        string database = Path.GetFullPath($".budget-overrun-{Guid.NewGuid():N}.db");
+        try
+        {
+            int calls = 0;
+            var provider = new Provider
+            {
+                Respond = (_, _) => Task.FromResult(++calls == 1
+                    ? new ModelResponse("[]", 600, 30, 1, 0.9m)
+                    : new ModelResponse("[]", 600, 30, 1, 0.2m))
+            };
+            var ledger = new SqliteReviewSpendLedger(database);
+            ReviewConfiguration config = FoundationTests.Config() with
+            {
+                Limits = FoundationTests.Config().Limits with { MaxInputTokens = 1000, MaxOutputTokens = 100 }
+            };
+            ReviewRun run = FoundationTests.Run();
+            var context = new ReviewContext(FoundationTests.Sha, FoundationTests.OtherSha,
+                "Trusted guidance", "Untrusted diff", [], [], []);
+            Task<CycleResult> ExecuteCycle() => new ReviewCycle(provider, ledger).RunAsync(config, run,
+                new("allancascante", "adversarial-review:run", FoundationTests.Sha, "label-event-1", true, false),
+                context, FoundationTests.Checks(), [],
+                _ => Task.FromResult(new PullRequestState(FoundationTests.Sha, true, false)),
+                10000, [], CancellationToken.None);
+
+            CycleResult result = await ExecuteCycle();
+
+            Assert.AreEqual(2, provider.Requests.Count);
+            CollectionAssert.AreEqual(new[] { 1000, 400 }, provider.Requests.Select(r => r.MaxInputTokens).ToArray());
+            Assert.AreEqual("completed", result.Report.Rounds[0].Outcome);
+            Assert.AreEqual("budget-exceeded", result.Report.Rounds[1].Outcome);
+            Assert.AreEqual(600, result.Report.Rounds[1].InputTokens);
+            Assert.AreEqual(30, result.Report.Rounds[1].OutputTokens);
+            Assert.AreEqual(0.2m, result.Report.Rounds[1].EstimatedCostUsd);
+            Assert.AreEqual("incomplete", result.Report.Status);
+            Assert.IsTrue(AuditEngine.RequiresHumanReview(result.Report));
+
+            CycleClaim claim = new(run.Repository, run.PullRequest, run.HeadSha, run.AuthorizationId,
+                config.Limits.PerAuthorizationUsd!.Value, config.Limits.MonthlyUsd!.Value,
+                config.Rounds!.Value, "allancascante", "adversarial-review:run");
+            await ledger.RecordAsync(claim, result.Report.Rounds[1], CancellationToken.None);
+
+            ReviewRound[] history = await ledger.ReadHistoryAsync(
+                run.Repository, run.PullRequest, run.HeadSha, CancellationToken.None, run.AuthorizationId);
+            Assert.AreEqual(2, history.Length);
+            Assert.AreEqual(600, history[1].InputTokens);
+            Assert.AreEqual(0.2m, history[1].EstimatedCostUsd);
+            using SqliteConnection connection = new($"Data Source={database};Pooling=False");
+            await connection.OpenAsync();
+            using SqliteCommand command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT (SELECT reserved_micro_usd FROM monthly_budgets),
+                    (SELECT sum(cost_micro_usd) FROM rounds),
+                    (SELECT final_status FROM claims);
+                """;
+            using SqliteDataReader reader = await command.ExecuteReaderAsync();
+            Assert.IsTrue(await reader.ReadAsync());
+            Assert.AreEqual(1_100_000L, reader.GetInt64(0));
+            Assert.AreEqual(1_100_000L, reader.GetInt64(1));
+            Assert.AreEqual("human-review-required", reader.GetString(2));
+        }
+        finally
+        {
+            foreach (string suffix in new[] { "", "-journal", "-wal", "-shm" })
+                File.Delete(database + suffix);
+        }
     }
 
     [TestMethod]

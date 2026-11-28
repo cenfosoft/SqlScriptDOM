@@ -81,8 +81,20 @@
         "outputTokens": { "type": ["integer", "null"], "minimum": 0 },
         "latencyMilliseconds": { "type": "integer", "minimum": 0 },
         "estimatedCostUsd": { "type": ["number", "null"], "minimum": 0 },
-        "outcome": { "enum": ["completed", "failed", "malformed", "cancelled"] }
-      }
+        "outcome": { "enum": ["completed", "failed", "malformed", "cancelled", "budget-exceeded"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "const": "budget-exceeded" } }, "required": ["outcome"] },
+          "then": {
+            "properties": {
+              "inputTokens": { "type": "integer", "minimum": 0 },
+              "outputTokens": { "type": "integer", "minimum": 0 },
+              "estimatedCostUsd": { "type": "number", "minimum": 0 }
+            }
+          }
+        }
+      ]
     },
     "audit": {
       "type": "object", "additionalProperties": false,

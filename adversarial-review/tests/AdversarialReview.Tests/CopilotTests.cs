@@ -214,17 +214,23 @@ public sealed class CopilotTests
     }
 
     [TestMethod]
-    public async Task ReportedOverrunsFailAndRetainReservation()
+    public async Task ReportedOverrunsAreReturnedForCycleAccounting()
     {
-        foreach (string field in new[] { "input", "output", "cost", "latency" })
+        foreach (string field in new[] { "input", "output", "cost" })
         {
             AssistantUsageData usage = Usage();
             if (field == "input") usage.InputTokens = 1001;
             if (field == "output") usage.OutputTokens = 201;
             if (field == "cost") usage.CopilotUsage!.TotalNanoAiu = 20_000_000_000;
-            var runtime = new Runtime { Reply = new("[]", [usage], field == "latency" ? -1 : 1) };
-            await Assert.ThrowsExceptionAsync<ContractException>(() => Provider(runtime).ReviewAsync(Request(), CancellationToken.None));
+            var runtime = new Runtime { Reply = new("[]", [usage], 1) };
+            ModelResponse response = await Provider(runtime).ReviewAsync(Request(), CancellationToken.None);
+            Assert.AreEqual(field == "input" ? 1001 : 12, response.InputTokens);
+            Assert.AreEqual(field == "output" ? 201 : 3, response.OutputTokens);
+            Assert.AreEqual(field == "cost" ? 0.2m : 0.001m, response.CostUsd);
         }
+        var invalidLatency = new Runtime { Reply = new("[]", [Usage()], -1) };
+        await Assert.ThrowsExceptionAsync<ContractException>(() =>
+            Provider(invalidLatency).ReviewAsync(Request(), CancellationToken.None));
     }
 
     [TestMethod]

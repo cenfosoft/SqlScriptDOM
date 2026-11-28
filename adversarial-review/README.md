@@ -92,28 +92,43 @@ an explicit verified `CopilotBillingConversion`. Complete `assistant.usage` reco
 are aggregated across calls, must identify the requested model, and are rounded up to
 integer microUSD for the ledger. The SDK `Cost`/model multiplier is **not dollars**.
 Missing/partial billing, model substitution, truncation, filtering, invalid usage, and
-overruns fail closed without retry and leave billing unconfirmed. Malformed findings
-retain known usage so the engine can record a malformed outcome. Cancellation is
-forwarded and the runtime attempts a bounded abort; reservations must remain held.
+overruns with incomplete usage fail closed without retry and leave billing
+unconfirmed. When the SDK reports complete usage beyond a requested token or cost
+ceiling, the adapter returns that usage for accounting; the cycle records a
+`budget-exceeded` outcome, rejects the response findings, stops further inference, and
+retains the financial reservation. Malformed findings retain known usage so the
+engine can record a malformed outcome. Cancellation is forwarded and the runtime
+attempts a bounded abort; reservations must remain held.
 Session disposal and deletion are attempted after each call. Cleanup failures are
 explicit errors, not successful reviews; the trusted host must inspect/protect any
 remaining private state and enforce its approved retention policy.
 
 The engine enforces at most three rounds per authorization and treats the configured
-input/output token values as aggregate per-cycle budgets: each SDK call receives only
-the remaining allowance. Each round is cancellation-bounded by the configured timeout
-and reservation expiry. An unresolved critical/high finding stops additional calls and
+input/output token values as best-effort aggregate per-cycle budgets: each SDK call
+receives the remaining allowance as a requested ceiling, but the SDK does not provide
+a verified hard enforcement guarantee. The engine accumulates reported usage and, if
+a completed response exceeds the remaining token or cost budget, persists the actual
+usage and known cost as `budget-exceeded`, rejects its findings, and makes no further
+model calls. Each round is cancellation-bounded by the configured timeout and
+reservation expiry. An unresolved critical/high finding stops additional calls and
 renders the report status as **Human Review Required**; an attempted but incomplete
 review also escalates. SQLite records the separate `human-review-required` final
-status. The JSON v1.0 report contract remains unchanged, and the advisory status does
-not apply a GitHub label or change the PR's open/closed state. Numeric risk scoring
-remains disabled; no score threshold is inferred.
+status. The report schema remains at version 1.0 and its round outcome enum includes
+`budget-exceeded`. The advisory status does not apply a GitHub label or change the
+PR's open/closed state. Numeric risk scoring remains disabled; no score threshold is
+inferred.
 
 Before any inference, SQLite atomically consumes the authorization and reserves the
-cycle's full financial maximum against the repository's monthly balance. The durable
+cycle's full financial maximum against the repository's monthly balance. When a
+reported cost exceeds the remaining cycle reservation, the ledger idempotently adds
+the known excess to the monthly reserved balance; if integer capacity is exhausted,
+it saturates at the maximum and consequently blocks additional reservations. The durable
 claim records the authorization ID, actor, label, PR, evaluated head SHA, and final
 status; ordered round outcomes and usage are recorded separately. Duplicate
-authorizations fail closed, and unknown billing does not release reserved funds.
+authorizations fail closed, and neither unknown billing nor a reported overrun
+releases the full reservation. A reported cost may exceed the original per-cycle
+reservation and is preserved for reconciliation; this is not proof of provider-side
+spend enforcement.
 
 The [SDK usage guide](https://github.com/github/copilot-sdk/blob/v1.0.22/docs/features/usage-and-billing.md)
 warns that nano-unit conversion must be checked against current billing documentation.
@@ -301,8 +316,8 @@ events start validation. [Foundation validation](../.github/workflows/adversaria
 runs the offline tool tests on Windows and Ubuntu, without model credentials or PR
 write permission. The earlier enforced suite total was 173, up from the 172-test
 Phase 1 reference after adding manifest-schema coverage for the preparation and
-static-analysis checks. The combined HU integration branch adds test cases; its
-current unfiltered suite contains 189 tests, and the workflow enforces that count.
+static-analysis checks. Subsequent integration and budget-accounting coverage brings
+the current unfiltered suite to 194 tests, and the workflow enforces that count.
 Artifacts currently use the repository's existing retention setting; the team must
 approve a retention policy before live review.
 
@@ -431,7 +446,9 @@ a constant-content `failure.json` without source, tokens, exception text, or pro
 payloads, validated by [its versioned schema](schemas/preparation-failure.schema.json).
 Output files are create-new only. The workflow also stores build/preparation logs and
 a SHA-256 manifest that records the repository, PR, head SHA, workflow run ID, attempt,
-and hashes of available files. Validation and static-analysis artifacts use the same
+and hashes of available files. GitHub runner labels `ubuntu-latest` and `windows-latest`
+are normalized to the schema's canonical platform values `ubuntu` and `windows`;
+unknown labels remain invalid. Validation and static-analysis artifacts use the same
 identity fields; reruns have distinct artifact names and never replace evidence from an
 earlier attempt. The manifest is an integrity checksum, not an authenticity proof;
 trusted admission must still verify identity against GitHub metadata. The workflow
@@ -447,9 +464,9 @@ currently reports no configured environments, so no required approver can be nam
 verified. The requested required reviewers for `adversarial-review` are
 `rvillarrealf` and `allancascante`; repository settings must still be configured and
 verified. The authorized label actor is not implicitly an environment approver. The
-feature branch also has no Actions runs yet. Local tests do not replace the required
-approval-wait run, same-repository/fork pilots, or screenshots showing run links, SHA,
-and jobs.
+feature branch now has Actions validation runs, but they do not prove the protected
+approval-wait behavior. Local tests do not replace the required approval-wait run,
+same-repository/fork pilots, or screenshots showing run links, SHA, and jobs.
 
 - A structural validation failure exits nonzero without echoing document contents.
   Fix the input rather than relaxing schema enforcement.
@@ -480,9 +497,11 @@ created by this implementation.
 authorization preflight, required checks, a provider, and a spend ledger. It claims
 the whole cycle before model execution, checks the current PR state and reservation
 lease before every round, rotates eligible configured models, and bounds request
-timeouts by both configuration and reservation expiry. The provider must honor
-cancellation and enforce input-token and maximum-cost limits before sending a
-request; validating reported usage afterward is only detection, not a billing cap.
+timeouts by both configuration and reservation expiry. The provider receives the
+remaining input-token and maximum-cost allowances as requested ceilings. These are
+best-effort SDK controls, not verified hard caps.
+Validating reported usage is post-request detection: a known overrun is recorded as
+`budget-exceeded`, findings are discarded, and the cycle stops without another call.
 
 The engine rejects malformed output, invalid usage, conflicting finding identifiers,
 and unexpected history. Failed/uncertain requests stop the cycle without retries,

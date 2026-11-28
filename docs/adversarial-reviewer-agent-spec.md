@@ -176,7 +176,7 @@ A cycle can end in one of three states:
 - **Repeat:** Correctable findings remain and the cycle limit has not been reached.
 - **Escalate:** A blocking condition exists, limits are exhausted, output is inconclusive, or policy requires a human decision.
 
-The initial maximum cycle count, token budget, timeout, and cost budget are open configuration decisions. Safe defaults MUST be selected before enabling correction cycles.
+The initial maximum cycle count, aggregate token budget, timeout, and cost budget are configuration decisions. Token and cost ceilings passed to the SDK are best-effort unless provider-side enforcement is verified. Complete reported usage that exceeds a remaining ceiling MUST be retained for reconciliation, marked as a budget-exceeded outcome, excluded from accepted findings, and stop further calls. The full financial reservation MUST remain held; paid execution remains disabled until enforcement and budget policies are approved.
 
 ### 5.5 Conditional Gate
 
@@ -284,7 +284,7 @@ The system MUST record reviewer dispositions so false-positive rates can be meas
 
 The workflow SHOULD minimize model input by selecting relevant files and summarizing deterministic reports. It MUST enforce bounded retries and review cycles. Cost and latency SHOULD be measured per pull request and per cycle.
 
-Review-round, per-authorization cost, and periodic cost limits MUST be represented in repository configuration. Paid review MUST remain disabled until required limit values and enforcement behavior are approved. Once enabled, it MUST fail safely when a required limit is missing, invalid, or exceeded.
+Review-round, per-authorization cost, aggregate token, and periodic cost limits MUST be represented in repository configuration. Paid review MUST remain disabled until required limit values and enforcement behavior are approved. SDK-requested ceilings are best-effort; once enabled, missing or invalid limits MUST fail before inference, while complete reported overruns MUST be recorded, stop the cycle, and require human review. Verified provider-side enforcement remains a prerequisite for paid activation.
 
 ## 9. Observability and Success Metrics
 

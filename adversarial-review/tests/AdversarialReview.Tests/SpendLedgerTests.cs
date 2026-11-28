@@ -184,6 +184,7 @@ public sealed class SpendLedgerTests
     [DataRow("failed")]
     [DataRow("malformed")]
     [DataRow("cancelled")]
+    [DataRow("budget-exceeded")]
     public async Task TerminalRoundStopsCycleEvenWithKnownZeroCost(string outcome)
     {
         CycleClaim claim = Claim();
@@ -217,7 +218,8 @@ public sealed class SpendLedgerTests
             Round(cost: decimal.MaxValue), Round() with { InputTokens = -1 },
             Round() with { OutputTokens = -1 }, Round() with { InputTokens = null },
             Round() with { InputTokens = null, OutputTokens = null },
-            Round(cost: null), Round() with { LatencyMilliseconds = -1 },
+            Round(cost: null), Round(cost: null, outcome: "budget-exceeded"),
+            Round() with { LatencyMilliseconds = -1 },
             Round() with { Outcome = "unknown" }, Round() with { Model = "" },
             Round() with { PromptVersion = null! }, Round() with { SelectionReason = "" }
         })
@@ -287,6 +289,47 @@ public sealed class SpendLedgerTests
         await File.WriteAllTextAsync(path, "not a SQLite database");
         await Assert.ThrowsExceptionAsync<SqliteException>(() => Ledger.ClaimAsync(Claim(), Token));
         Assert.AreEqual("not a SQLite database", await File.ReadAllTextAsync(path));
+    }
+
+    [TestMethod]
+    public async Task VersionThreeMigrationPreservesUsageAndAcceptsIdempotentOverrunSettlement()
+    {
+        CycleClaim claim = Claim();
+        await Ledger.ClaimAsync(claim, Token);
+        await Ledger.RecordAsync(claim, Round(), Token);
+        await ReadAsync("""
+            ALTER TABLE rounds RENAME TO rounds_v4;
+            CREATE TABLE rounds(
+                repository TEXT NOT NULL, authorization_id TEXT NOT NULL,
+                number INTEGER NOT NULL CHECK(number BETWEEN 1 AND 3), fingerprint TEXT NOT NULL,
+                input_tokens INTEGER CHECK(input_tokens >= 0), output_tokens INTEGER CHECK(output_tokens >= 0),
+                latency_ms INTEGER NOT NULL CHECK(latency_ms >= 0),
+                cost_micro_usd INTEGER CHECK(cost_micro_usd >= 0),
+                outcome TEXT NOT NULL CHECK(outcome IN ('completed', 'malformed', 'failed', 'cancelled')),
+                provider TEXT NOT NULL, model TEXT NOT NULL, selection_reason TEXT NOT NULL, prompt_version TEXT NOT NULL,
+                PRIMARY KEY(repository, authorization_id, number),
+                FOREIGN KEY(repository, authorization_id) REFERENCES claims(repository, authorization_id)
+            ) STRICT;
+            INSERT INTO rounds SELECT * FROM rounds_v4;
+            DROP TABLE rounds_v4;
+            PRAGMA user_version = 3;
+            """);
+
+        ReviewRound[] history = await Ledger.ReadHistoryAsync(
+            "owner/repo", 1, FoundationTests.Sha, Token, claim.AuthorizationId);
+        Assert.AreEqual(4L, await ReadAsync("PRAGMA user_version;"));
+        Assert.AreEqual(1, history.Length);
+        Assert.AreEqual(0.1m, history[0].EstimatedCostUsd);
+
+        ReviewRound overrun = Round(2, 1.1m, "budget-exceeded");
+        await Ledger.RecordAsync(claim, overrun, Token);
+        await Ledger.RecordAsync(claim, overrun, Token);
+
+        Assert.AreEqual(2L, await ReadAsync("SELECT count(*) FROM rounds;"));
+        Assert.AreEqual(1_200_000L, await ReadAsync("SELECT sum(cost_micro_usd) FROM rounds;"));
+        Assert.AreEqual(1_200_000L, await ReadAsync("SELECT reserved_micro_usd FROM monthly_budgets;"));
+        await Assert.ThrowsExceptionAsync<ContractException>(() =>
+            Ledger.ClaimAsync(Claim("another", maximum: 0.9m), Token));
     }
 
     [TestMethod]
@@ -370,6 +413,6 @@ public sealed class SpendLedgerTests
         Assert.AreEqual(1_000_000L, await ReadAsync("SELECT reserved_micro_usd FROM monthly_budgets;"));
         Assert.AreEqual(1L, await ReadAsync("SELECT count(*) FROM rounds;"));
         await Ledger.EnsureActiveAsync(claim, Token);
-        Assert.AreEqual(3L, await ReadAsync("PRAGMA user_version;"));
+        Assert.AreEqual(4L, await ReadAsync("PRAGMA user_version;"));
     }
 }
