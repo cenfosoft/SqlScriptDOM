@@ -41,6 +41,22 @@ public sealed class AuditTests
     }
 
     [TestMethod]
+    public void BudgetExceededRoundsRequireKnownUsageAndEscalate()
+    {
+        AuditReport overrun = AuditEngine.Create(FoundationTests.Run(), FoundationTests.Sha,
+            FoundationTests.Checks(), [],
+            [FoundationTests.Round(1, "first") with { Outcome = "budget-exceeded" }], 1);
+        Assert.AreEqual("incomplete",
+            Contracts.Read<AuditReport>(Contracts.Write(overrun, "audit-report"), "audit-report").Status);
+        Assert.IsTrue(AuditEngine.RequiresHumanReview(overrun));
+        Assert.ThrowsException<ContractException>(() =>
+            Contracts.Write(overrun with
+            {
+                Rounds = [overrun.Rounds[0] with { EstimatedCostUsd = null }]
+            }, "audit-report"));
+    }
+
+    [TestMethod]
     public void HighSeverityFindingsEscalateWithoutInventingNumericRisk()
     {
         var report = Report([Fixture()]);

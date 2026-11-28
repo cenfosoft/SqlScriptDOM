@@ -27,7 +27,7 @@ public interface IReviewSpendLedger
     // Revalidate the reservation before each request and return its absolute expiry.
     Task<DateTimeOffset> EnsureActiveAsync(CycleClaim claim, CancellationToken cancellationToken);
 
-    // An unsuccessful/unknown request retains its full reservation for reconciliation.
+    // Unknown usage and reported budget overruns retain the full reservation for reconciliation.
     Task RecordAsync(CycleClaim claim, ReviewRound round, CancellationToken cancellationToken);
 
     // Final status is persisted with the authorization and SHA for auditability.
@@ -126,24 +126,33 @@ public sealed class ReviewCycle(IReviewProvider provider, IReviewSpendLedger led
                 {
                     ModelResponse response = await provider.ReviewAsync(request, timeout.Token).WaitAsync(timeout.Token);
                     if (response.InputTokens < 0 || response.OutputTokens < 0
-                        || response.InputTokens > request.MaxInputTokens || response.OutputTokens > request.MaxOutputTokens
-                        || response.LatencyMilliseconds < 0 || response.CostUsd < 0 || response.CostUsd > remaining)
-                        throw new ContractException("Provider usage is invalid or exceeds the reserved limits.");
+                        || response.LatencyMilliseconds < 0 || response.CostUsd < 0)
+                        throw new ContractException("Provider usage is invalid.");
                     inputTokensUsed = checked(inputTokensUsed + response.InputTokens);
                     outputTokensUsed = checked(outputTokensUsed + response.OutputTokens);
-                    result = Round(index, selection, response, "completed");
-                    try
+                    bool exceededRequestedBudget = response.InputTokens > request.MaxInputTokens
+                        || response.OutputTokens > request.MaxOutputTokens || response.CostUsd > remaining;
+                    result = Round(index, selection, response, exceededRequestedBudget ? "budget-exceeded" : "completed");
+                    if (exceededRequestedBudget)
                     {
-                        accepted = ReviewerOutput.Parse(response.FindingsJson, context, secrets);
-                        if (accepted.Any(f => findings.TryGetValue(f.Id, out Finding? previous)
-                            && Contracts.Write(previous, "finding") != Contracts.Write(f, "finding")))
-                            throw new ContractException("Conflicting findings reuse an identifier.");
-                    }
-                    catch (ContractException)
-                    {
-                        result = result with { Outcome = "malformed" };
                         accepted = [];
-                        diagnostics.Add("Model output was rejected; response content is not logged.");
+                        diagnostics.Add("Reported usage exceeded the remaining cycle budget; actual usage was retained, findings were not accepted, and no further model call was made.");
+                    }
+                    else
+                    {
+                        try
+                        {
+                            accepted = ReviewerOutput.Parse(response.FindingsJson, context, secrets);
+                            if (accepted.Any(f => findings.TryGetValue(f.Id, out Finding? previous)
+                                && Contracts.Write(previous, "finding") != Contracts.Write(f, "finding")))
+                                throw new ContractException("Conflicting findings reuse an identifier.");
+                        }
+                        catch (ContractException)
+                        {
+                            result = result with { Outcome = "malformed" };
+                            accepted = [];
+                            diagnostics.Add("Model output was rejected; response content is not logged.");
+                        }
                     }
                 }
                 catch (Exception error) when (error is HttpRequestException or OperationCanceledException or ContractException)
@@ -200,7 +209,7 @@ public sealed class ReviewCycle(IReviewProvider provider, IReviewSpendLedger led
     {
         if (round.Number <= 0 || round.LatencyMilliseconds < 0 || round.InputTokens < 0
             || round.OutputTokens < 0 || round.EstimatedCostUsd < 0
-            || round.Outcome is not ("completed" or "failed" or "malformed" or "cancelled")
+            || round.Outcome is not ("completed" or "failed" or "malformed" or "cancelled" or "budget-exceeded")
             || string.IsNullOrWhiteSpace(round.PromptVersion) || string.IsNullOrWhiteSpace(round.SelectionReason))
             throw new ContractException("Prior model history contains invalid usage or outcome metadata.");
     }

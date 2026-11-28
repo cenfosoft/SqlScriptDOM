@@ -4,7 +4,7 @@
 |---|---|
 | Phase | Phase 1 — Report-Only Foundation |
 | Status | In progress — trusted integration and pilot blocked by outstanding approved inputs |
-| Progress | Admission, bounded evidence ingestion, persistent orchestration/history/publication, and preparation-only workflow implemented; 189 adversarial-review tests and 1,176 SqlDom tests pass on .NET 8; paid execution disabled; live deployment/pilot pending |
+| Progress | Admission, bounded evidence ingestion, persistent orchestration/history/publication, and preparation-only workflow implemented; 194 adversarial-review tests and 1,176 SqlDom tests pass on .NET 8; paid execution disabled; live deployment/pilot pending |
 | Last updated | November 21, 2026 |
 | Source specification | [Adversarial Reviewer Agent Specification](adversarial-reviewer-agent-spec.md) |
 | Target repository | [cenfosoft/SqlScriptDOM](https://github.com/cenfosoft/SqlScriptDOM) |
@@ -147,8 +147,11 @@ disabled and all unapproved limits remain null. Gemini was not in the returned
 catalog. Unknown policy entries and `auto` are not inference-eligible. See the
 [integration/runbook](../adversarial-review/README.md#github-copilot-sdk-and-metadata-only-model-discovery).
 The report-only adapter has offline coverage, but live inference, billing conversion,
-and hard cap behavior have **not** been verified; SDK session ceilings are not a
-substitute for approved provider-side spending enforcement.
+and provider-side hard cap behavior have **not** been verified. Requested SDK token
+and AI-credit ceilings are best-effort; complete reported overruns are persisted for
+reconciliation, rejected as review findings, and stop the cycle without another call.
+The full financial reservation remains held. These controls are not a substitute for
+approved provider-side spending enforcement.
 
 ### 5.5 Authorized Paid-Review Gate
 
@@ -573,6 +576,7 @@ Work on schemas and baseline definitions can proceed in parallel after M1. Secre
 
 | Date | Update | Evidence / next step |
 |---|---|---|
+| November 21, 2026 (UTC) | Implemented best-effort aggregate token accounting: retain complete reported usage/cost on an overrun, mark the round `budget-exceeded`, stop inference, reject its findings, and retain the full reservation while adding any known financial overrun to the monthly reservation. Migrated the spend ledger from schema v3 to v4. | Adversarial-review suite: 194 passed on .NET 8, including provider, cycle, SQLite overrun/idempotency, schema, and migration coverage. Provider-side hard enforcement remains unverified; paid inference remains disabled. |
 | November 9, 2026 (UTC) | Completed the HU-05 fork/upstream report, documented AI prompt/tool provenance, added the workflow diagram, and read back the live `main` protection settings for HU-06. | Both metric collections complete; 2/15 merged samples and 7/3 separately censored open PRs. `main` requires five checks and one post-push approval. CLI and test assemblies compile; the Roslyn build succeeds with five existing `SYSLIB0051` warnings. Local test execution was blocked because Windows Application Control denied loading generated DLLs (`0x800711C7`). All five required GitHub Actions checks, including Windows and Ubuntu test jobs, passed for PR #16 at `20225bd3301aa7ee6c70fa45410976ee70cfcc05`; no human review has been submitted. PR #15 still needs a fresh static-analysis run. The `adversarial-review` environment and agreed reviewer roster remain unconfigured/unverified. See [governance evidence](repository-governance.md). |
 | October 18, 2026 (UTC) | Pushed the implementation branch and opened draft PR #3 in the fork for team review, using the repository PR template and documenting incomplete activation/pilot criteria. | [Draft PR](https://github.com/cenfosoft/SqlScriptDOM/pull/3). Refreshed local verification: 172 tooling tests and 1,176 parser tests passed; CLI build zero warnings/errors; actionlint 1.7.7 passed. Standard PR creation encountered upstream-parent SAML metadata access; direct fork REST creation succeeded without accessing upstream resources. No paid inference or environment configuration performed. |
 | October 18, 2026 (UTC) | Added a read-only default-branch `pull_request_target:labeled` preparation workflow, protected-environment reference, and `prepare-review` CLI with sanitized reports/failure artifacts. It cannot invoke inference even when configuration is enabled. | Tooling suite: 172 passed; CLI build: 0 warnings/errors; actionlint 1.7.7 passed for preparation and both existing validation workflows. Added webhook/disabled-path tests, authorization revocation recovery, and archive expansion/count ceiling tests. Manual inputs and deployment-specific remaining work are enumerated above; no remote installation or paid activation performed. |
@@ -791,8 +795,8 @@ Add approved answers here; do not rely only on chat history.
 | R-005 | Artifacts expose source, prompts, or secrets | Privacy/security incident | Redaction, minimum retention, checksums, approved data policy | Open |
 | R-006 | Duplicate or stale PR comments | Confusing audit trail | Marker-based update and strict head-SHA comparison | Open |
 | R-007 | Metrics are not comparable | Invalid lead-time conclusions | Approve metric definitions and baseline period before intervention | Open |
-| R-008 | Provider cost or latency is unbounded | Budget overrun and slow CI | Skip unnecessary calls; enforce token, retry, timeout, and cost limits | Open |
-| R-009 | An untrusted contributor repeatedly triggers paid review | Token exhaustion or financial loss | One-shot allowlisted authorization bound to the current SHA, deduplication, concurrency control, and hard spend limits | Mitigation designed; implementation pending |
+| R-008 | Provider cost or latency is unbounded | Budget overrun and slow CI | Skip unnecessary calls; request token/cost ceilings, stop after a reported overrun, enforce timeout, and retain known usage for reconciliation | Open; provider-side hard cap unverified |
+| R-009 | An untrusted contributor repeatedly triggers paid review | Token exhaustion or financial loss | One-shot allowlisted authorization bound to the current SHA, deduplication, concurrency control, and conservative full-cycle reservation | Mitigation designed; implementation pending |
 
 ## 14. Change-Control Rules for This Tracker
 

@@ -126,8 +126,11 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
             claim.AuthorizationId, maximum, claim.MaximumRounds, cancellationToken);
         if (round.Number != count + 1)
             throw new ContractException("Rounds must be recorded in contiguous order.");
-        if (cost.HasValue && cost.Value > maximum - spent)
+        if (cost.HasValue && cost.Value > maximum - spent && round.Outcome != "budget-exceeded")
             throw new ContractException("Recorded costs exceed the reserved cycle budget.");
+        long reservationTopUp = round.Outcome == "budget-exceeded" && cost.HasValue
+            ? Math.Max(0, cost.Value - (maximum - spent))
+            : 0;
         // Late settlement is allowed after expiry; it never grants admission in the new month.
         await ExecuteAsync(connection, transaction, """
             INSERT INTO rounds(repository, authorization_id, number, fingerprint,
@@ -140,6 +143,19 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
             ("$output", round.OutputTokens), ("$latency", round.LatencyMilliseconds),
             ("$cost", cost), ("$outcome", round.Outcome), ("$provider", round.Provider),
             ("$model", round.Model), ("$reason", "Recovered from durable model history."), ("$prompt", round.PromptVersion));
+        if (reservationTopUp > 0)
+        {
+            await ExecuteAsync(connection, transaction, """
+                UPDATE monthly_budgets
+                SET reserved_micro_usd = CASE
+                    WHEN reserved_micro_usd > 9223372036854775807 - $topup THEN 9223372036854775807
+                    ELSE reserved_micro_usd + $topup
+                END
+                WHERE repository = $repo AND month = (
+                    SELECT month FROM claims WHERE repository = $repo AND authorization_id = $auth);
+                """, cancellationToken, ("$topup", reservationTopUp), ("$repo", repository),
+                ("$auth", claim.AuthorizationId));
+        }
         await transaction.CommitAsync(cancellationToken);
     }
 
@@ -182,7 +198,7 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
         CancellationToken cancellationToken)
     {
         long version = (long)(await ScalarAsync(connection, transaction, "PRAGMA user_version;", cancellationToken))!;
-        if (version == 3) return;
+        if (version == 4) return;
         if (version == 1)
         {
             await ExecuteAsync(connection, transaction, """
@@ -202,6 +218,35 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
                 ALTER TABLE claims ADD COLUMN final_status TEXT
                     CHECK(final_status IS NULL OR final_status IN ('complete', 'incomplete', 'stale', 'human-review-required'));
                 PRAGMA user_version = 3;
+                """, cancellationToken);
+            version = 3;
+        }
+        if (version == 3)
+        {
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE rounds RENAME TO rounds_v3;
+                CREATE TABLE rounds(
+                    repository TEXT NOT NULL, authorization_id TEXT NOT NULL,
+                    number INTEGER NOT NULL CHECK(number BETWEEN 1 AND 3), fingerprint TEXT NOT NULL,
+                    input_tokens INTEGER CHECK(input_tokens >= 0), output_tokens INTEGER CHECK(output_tokens >= 0),
+                    latency_ms INTEGER NOT NULL CHECK(latency_ms >= 0),
+                    cost_micro_usd INTEGER CHECK(cost_micro_usd >= 0),
+                    outcome TEXT NOT NULL CHECK(outcome IN ('completed', 'malformed', 'failed', 'cancelled', 'budget-exceeded')),
+                    provider TEXT, model TEXT, selection_reason TEXT, prompt_version TEXT,
+                    CHECK(outcome != 'budget-exceeded' OR
+                        (input_tokens IS NOT NULL AND output_tokens IS NOT NULL AND cost_micro_usd IS NOT NULL)),
+                    PRIMARY KEY(repository, authorization_id, number),
+                    FOREIGN KEY(repository, authorization_id) REFERENCES claims(repository, authorization_id)
+                ) STRICT;
+                INSERT INTO rounds(repository, authorization_id, number, fingerprint,
+                    input_tokens, output_tokens, latency_ms, cost_micro_usd, outcome,
+                    provider, model, selection_reason, prompt_version)
+                SELECT repository, authorization_id, number, fingerprint,
+                    input_tokens, output_tokens, latency_ms, cost_micro_usd, outcome,
+                    provider, model, selection_reason, prompt_version
+                FROM rounds_v3;
+                DROP TABLE rounds_v3;
+                PRAGMA user_version = 4;
                 """, cancellationToken);
             return;
         }
@@ -233,12 +278,14 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
                 input_tokens INTEGER CHECK(input_tokens >= 0), output_tokens INTEGER CHECK(output_tokens >= 0),
                 latency_ms INTEGER NOT NULL CHECK(latency_ms >= 0),
                 cost_micro_usd INTEGER CHECK(cost_micro_usd >= 0),
-                outcome TEXT NOT NULL CHECK(outcome IN ('completed', 'malformed', 'failed', 'cancelled')),
+                outcome TEXT NOT NULL CHECK(outcome IN ('completed', 'malformed', 'failed', 'cancelled', 'budget-exceeded')),
                 provider TEXT NOT NULL, model TEXT NOT NULL, selection_reason TEXT NOT NULL, prompt_version TEXT NOT NULL,
+                CHECK(outcome != 'budget-exceeded' OR
+                    (input_tokens IS NOT NULL AND output_tokens IS NOT NULL AND cost_micro_usd IS NOT NULL)),
                 PRIMARY KEY(repository, authorization_id, number),
                 FOREIGN KEY(repository, authorization_id) REFERENCES claims(repository, authorization_id)
             ) STRICT;
-            PRAGMA user_version = 3;
+            PRAGMA user_version = 4;
             """, cancellationToken);
     }
 
@@ -297,7 +344,7 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
         int maximumRounds, CancellationToken cancellationToken)
     {
         using SqliteCommand command = Command(connection, transaction, """
-            SELECT count(*), coalesce(sum(cost_micro_usd), 0),
+            SELECT count(*), coalesce(sum(CASE WHEN outcome = 'completed' THEN cost_micro_usd ELSE 0 END), 0),
                 coalesce(sum(CASE WHEN cost_micro_usd IS NULL OR outcome != 'completed' THEN 1 ELSE 0 END), 0)
             FROM rounds WHERE repository = $repo AND authorization_id = $auth;
             """, ("$repo", repository), ("$auth", authorizationId));
@@ -335,9 +382,9 @@ public sealed class SqliteReviewSpendLedger : IReviewSpendLedger
         if (round.Number < 1 || round.Number > maximumRounds
             || !ValidText(round.Provider) || !ValidText(round.Model) || !ValidText(round.SelectionReason)
             || !ValidText(round.PromptVersion) || round.InputTokens is < 0 || round.OutputTokens is < 0
-            || round.LatencyMilliseconds < 0 || round.Outcome is not ("completed" or "malformed" or "failed" or "cancelled")
+            || round.LatencyMilliseconds < 0 || round.Outcome is not ("completed" or "malformed" or "failed" or "cancelled" or "budget-exceeded")
             || round.InputTokens.HasValue != round.OutputTokens.HasValue
-            || (round.Outcome is "completed" or "malformed"
+            || (round.Outcome is "completed" or "malformed" or "budget-exceeded"
                 && (round.InputTokens is null || round.OutputTokens is null || round.EstimatedCostUsd is null)))
             throw new ContractException("Invalid round metadata or usage.");
         return round.EstimatedCostUsd is decimal cost ? MicroUsd(cost) : null;
