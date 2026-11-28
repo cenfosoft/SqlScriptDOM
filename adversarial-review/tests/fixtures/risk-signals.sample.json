@@ -1,0 +1,11 @@
+{
+  "addedCodeLines": 40,
+  "deletedCodeLines": 10,
+  "coveredAddedLines": 30,
+  "instrumentableAddedLines": 30,
+  "lowFindings": 1,
+  "mediumFindings": 0,
+  "newStaticWarnings": 0,
+  "hasIntegrationTests": true,
+  "hasUnresolvedHighOrCriticalFinding": false
+}

@@ -11,6 +11,7 @@ This directory contains the project documentation for an AI-assisted, adversaria
 - [Repository Governance](repository-governance.md) — verified `main` branch protection, review policy, Issues, and milestone state.
 - [AI Usage and Prompt Traceability](ai-usage.md) — tools and model candidates actually used or considered, prompt catalog references, and commit co-authorship evidence.
 - [Phase 1 Tooling and Operations](../adversarial-review/README.md) — .NET validation commands, contract compatibility, baseline collection, and activation prerequisites.
+- [How to Run the JEV Risk Assessment](jev-risk-assessment.md) — risk rubric, local and GitHub Actions usage, configuration locations, and connection to the review flow.
 
 ## Repository Context
 

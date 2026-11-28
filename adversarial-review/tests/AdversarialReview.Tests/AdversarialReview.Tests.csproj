@@ -10,6 +10,7 @@
     <ProjectReference Include="../../src/AdversarialReview.Core/AdversarialReview.Core.csproj" />
     <ProjectReference Include="../../src/AdversarialReview.Copilot/AdversarialReview.Copilot.csproj" />
     <None Include="../../config/*.json" Link="config/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../.github/prompts/adversarial-review.prompt.md" Link="prompts/adversarial-review.prompt.md" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../fixtures/*.json" Link="fixtures/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

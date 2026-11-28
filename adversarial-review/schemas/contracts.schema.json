@@ -111,7 +111,93 @@
         "status": { "enum": ["complete", "incomplete", "stale"] },
         "riskScore": { "type": "null" },
         "blockers": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/text" } },
-        "limitations": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/text" } }
+        "limitations": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/text" } },
+        "risk": { "$ref": "#/$defs/risk" }
+      }
+    },
+    "level": { "enum": ["low", "mid", "high"] },
+    "risk": {
+      "type": "object", "additionalProperties": false,
+      "required": ["rubricVersion", "signals", "factors", "assessment", "decision", "missing", "label", "labelOutcome", "autoMergeOutcome"],
+      "properties": {
+        "rubricVersion": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+        "signals": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["addedCodeLines", "deletedCodeLines", "coveredAddedLines", "instrumentableAddedLines", "lowFindings", "mediumFindings", "newStaticWarnings", "hasIntegrationTests", "hasUnresolvedHighOrCriticalFinding"],
+              "properties": {
+                "addedCodeLines": { "type": "integer", "minimum": 0 },
+                "deletedCodeLines": { "type": "integer", "minimum": 0 },
+                "coveredAddedLines": { "type": ["integer", "null"], "minimum": 0 },
+                "instrumentableAddedLines": { "type": ["integer", "null"], "minimum": 0 },
+                "lowFindings": { "type": "integer", "minimum": 0 },
+                "mediumFindings": { "type": "integer", "minimum": 0 },
+                "newStaticWarnings": { "type": "integer", "minimum": 0 },
+                "hasIntegrationTests": { "type": ["boolean", "null"] },
+                "hasUnresolvedHighOrCriticalFinding": { "type": "boolean" }
+              }
+            }
+          ]
+        },
+        "factors": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["rubricVersion", "changedLines", "coverage", "adversarialFindings", "staticWarnings", "hasIntegrationTests", "hasUnresolvedHighOrCriticalFinding"],
+              "properties": {
+                "rubricVersion": { "type": "string" },
+                "changedLines": { "$ref": "#/$defs/level" },
+                "coverage": { "enum": ["low", "mid", "high", "not-applicable"] },
+                "adversarialFindings": { "$ref": "#/$defs/level" },
+                "staticWarnings": { "$ref": "#/$defs/level" },
+                "hasIntegrationTests": { "type": ["boolean", "null"] },
+                "hasUnresolvedHighOrCriticalFinding": { "type": "boolean" }
+              }
+            }
+          ]
+        },
+        "assessment": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["schemaVersion", "status", "rubricVersion", "requestedModel", "answeredModel", "classification", "confidence", "probabilities", "inputTokens", "outputTokens", "reason"],
+              "properties": {
+                "schemaVersion": { "const": "1.0" },
+                "status": { "enum": ["assessed", "unavailable", "invalid"] },
+                "rubricVersion": { "type": "string" },
+                "requestedModel": { "type": "string", "maxLength": 64 },
+                "answeredModel": { "type": ["string", "null"], "maxLength": 64 },
+                "classification": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/level" }] },
+                "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+                "probabilities": {
+                  "oneOf": [
+                    { "type": "null" },
+                    { "type": "object", "additionalProperties": false, "properties": { "low": { "type": "number" }, "mid": { "type": "number" }, "high": { "type": "number" } } }
+                  ]
+                },
+                "inputTokens": { "type": ["integer", "null"], "minimum": 0 },
+                "outputTokens": { "type": ["integer", "null"], "minimum": 0 },
+                "reason": { "type": ["string", "null"], "maxLength": 512 }
+              }
+            }
+          ]
+        },
+        "decision": {
+          "type": "object", "additionalProperties": false,
+          "required": ["eligibleForLowRiskLabel", "reasons"],
+          "properties": {
+            "eligibleForLowRiskLabel": { "type": "boolean" },
+            "reasons": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/text" } }
+          }
+        },
+        "missing": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/text" } },
+        "label": { "type": ["string", "null"], "maxLength": 50 },
+        "labelOutcome": { "enum": ["pending", "applied", "failed", "skipped"] },
+        "autoMergeOutcome": { "enum": ["pending", "enabled", "disabled", "failed", "not-eligible", "skipped"] }
       }
     }
   }

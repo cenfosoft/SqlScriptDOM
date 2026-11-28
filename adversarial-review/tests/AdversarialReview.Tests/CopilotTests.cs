@@ -234,15 +234,17 @@ public sealed class CopilotTests
     }
 
     [TestMethod]
-    public void ShippedConfigurationUsesDiscoveredDiverseModelsButRemainsDisabled()
+    public void ShippedConfigurationUsesDiscoveredDiverseModelsWithBilledLimits()
     {
         ReviewConfiguration config = ReviewConfiguration.Parse(File.ReadAllText(
             Path.Combine(AppContext.BaseDirectory, "config", "review.json")));
-        Assert.IsFalse(config.Enabled);
+        Assert.IsTrue(config.Enabled);
         Assert.AreEqual(3, config.Models.Length);
         Assert.IsTrue(config.Models.All(m => m.Provider == CopilotModelCatalog.Provider));
         Assert.AreEqual(ReviewConfiguration.MaxRounds, config.Rounds);
-        Assert.IsTrue(config.ExecutionBlockers().Length > 0);
+        // The shipped conversion must match the documented rate: 1e9 nano-units per credit, USD 0.01 per credit.
+        new CopilotBillingConversion(config.CopilotBilling!.NanoUnitsPerCredit, config.CopilotBilling.UsdPerCredit).Validate();
+        Assert.AreEqual(100m, config.Limits.PerAuthorizationUsd!.Value / config.CopilotBilling.UsdPerCredit);
     }
 
     [TestMethod]
@@ -256,7 +258,8 @@ public sealed class CopilotTests
                 var runtime = new Runtime();
                 if (!completeBilling) runtime.Reply.Usage[0].AiCreditsStatus = AiCreditsStatus.Partial;
                 var cycle = new ReviewCycle(Provider(runtime), new SqliteReviewSpendLedger(database));
-                ReviewConfiguration config = FoundationTests.Config() with { Models = [Request().Model] };
+                ReviewConfiguration config = FoundationTests.Config() with
+                { Models = [Request().Model], CopilotBilling = new(1_000_000_000m, 0.01m) };
                 Task<CycleResult> Run() => cycle.RunAsync(config, FoundationTests.Run(),
                     new("allancascante", "adversarial-review:run", FoundationTests.Sha, "label-event-1", true, false),
                     new(FoundationTests.Sha, FoundationTests.OtherSha, "trusted", "untrusted", [], [], []),

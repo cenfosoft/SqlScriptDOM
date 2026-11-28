@@ -7,7 +7,12 @@
   "properties": {
     "schemaVersion": { "const": "1.0" },
     "status": { "const": "failed" },
-    "stage": { "const": "preparation" },
-    "message": { "const": "Trusted preparation failed. Consult sanitized job diagnostics; no inference or authorization consumption was performed." }
+    "stage": { "enum": ["preparation", "review"] },
+    "message": {
+      "enum": [
+        "Trusted preparation failed. Consult sanitized job diagnostics; no inference or authorization consumption was performed.",
+        "Trusted review failed. Consult sanitized job diagnostics and the spend ledger; any reserved spend remains held."
+      ]
+    }
   }
 }

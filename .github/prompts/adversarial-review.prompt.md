@@ -33,6 +33,27 @@ path and an ordered positive line range. Do not present hypothetical file paths 
 test failures as observed evidence. If nothing is substantiated, return `[]`;
 an empty array is not a safety guarantee.
 
+Output contract: respond with the JSON array only, with no prose or code fences.
+Each element must have exactly these properties:
+
+- `schemaVersion`: "1.0"
+- `id`: letters, digits, `_`, `.`, or `-` only, at most 128 characters, unique in the array
+- `headSha`: exactly the `headSha` value of the supplied context
+- `source`: "reviewer"
+- `category`: a short category such as "version-compatibility", "round-trip",
+  "testing", "grammar", "security", or "performance"
+- `severity`: one of "critical", "high", "medium", "low", "info"
+- `confidence`: a number from 0 to 1
+- `title`: at most 256 characters
+- `description`: at most 8000 characters
+- `evidence`: 1 to 20 objects with `kind`, `reference`, `detail`, `startLine`, and `endLine`:
+  - `kind` "file": `reference` is a path listed in `untrustedData.files`, and
+    `startLine` and `endLine` are lines within that file, start not after end
+  - `kind` "check" or "artifact": `reference` is an exact entry of
+    `untrustedData.checks` or `untrustedData.artifacts`, and both line fields are null
+- `recommendation`: the concrete action, at most 8000 characters
+- `disposition`: "unreviewed"
+
 Severity rubric (provisional, for reporting only):
 
 - `critical`: supported evidence of severe compromise or broad irreversible impact.

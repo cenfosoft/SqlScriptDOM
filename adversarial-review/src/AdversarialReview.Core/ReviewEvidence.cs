@@ -6,7 +6,13 @@ using System.Text.Json;
 
 namespace AdversarialReview;
 
-public sealed record IngestedEvidence(CheckResult[] Checks, string[] Blockers);
+public sealed record IngestedEvidence(CheckResult[] Checks, string[] Blockers)
+{
+    // Verified raw files needed for risk signals, keyed by "<source>/<path>".
+    public IReadOnlyDictionary<string, byte[]> Files { get; init; } = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+}
+
+public sealed record VerifiedArchive(string Conclusion, IReadOnlyDictionary<string, byte[]> Files);
 
 public static class ReviewEvidenceArchive
 {
@@ -14,6 +20,13 @@ public static class ReviewEvidenceArchive
 
     // Inspect in memory, never extract contributor-controlled paths into the host.
     public static CheckResult Verify(byte[] zip, EvidenceIdentity identity, string check, string platform, string reference)
+    {
+        VerifiedArchive archive = Open(zip, identity, check, platform, _ => false);
+        return new("1.0", identity.HeadSha, check, platform, archive.Conclusion, reference);
+    }
+
+    // Returns the manifest conclusion and the verified bytes of files selected by retain.
+    public static VerifiedArchive Open(byte[] zip, EvidenceIdentity identity, string check, string platform, Func<string, bool> retain)
     {
         if (zip.Length > MaximumArchiveBytes) throw new ContractException("Evidence archive exceeds its compressed byte ceiling.");
         try
@@ -23,6 +36,7 @@ public static class ReviewEvidenceArchive
             if (archive.Entries.Count is < 2 or > EvidenceManifest.MaximumFiles + 1)
                 throw new ContractException("Evidence archive entry count is invalid.");
             Dictionary<string, (long Bytes, string Sha256)> files = new(StringComparer.Ordinal);
+            Dictionary<string, byte[]> retained = new(StringComparer.Ordinal);
             HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
             string? manifestJson = null;
             long total = 0;
@@ -53,7 +67,10 @@ public static class ReviewEvidenceArchive
                 if (path == EvidenceManifest.FileName)
                     manifestJson = new UTF8Encoding(false, true).GetString(bytes);
                 else
+                {
                     files.Add(path, (bytes.Length, Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()));
+                    if (retain(path)) retained.Add(path, bytes);
+                }
             }
             if (manifestJson is null) throw new ContractException("Evidence manifest is missing.");
             EvidenceManifest manifest = Contracts.Read<EvidenceManifest>(manifestJson, "evidence-manifest");
@@ -62,7 +79,7 @@ public static class ReviewEvidenceArchive
                 || manifest.Files.Select(f => f.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count() != manifest.Files.Length
                 || manifest.Files.Any(f => !files.TryGetValue(f.Path, out var actual) || actual.Bytes != f.Bytes || actual.Sha256 != f.Sha256))
                 throw new ContractException("Evidence manifest identity or raw file checksums do not match.");
-            return new("1.0", identity.HeadSha, check, platform, manifest.Conclusion, reference);
+            return new(manifest.Conclusion, retained);
         }
         catch (Exception error) when (error is InvalidDataException or DecoderFallbackException)
         {
@@ -82,6 +99,22 @@ public static class ReviewEvidenceArchive
 
 public sealed class GitHubReviewEvidence(GitHubReviewApi api, HttpClient artifactHttp)
 {
+    // The artifact, job, and step names mirror .github/workflows/pr-validation.yml.
+    internal const string BuildScriptDomStep = "Build ScriptDOM on .NET 8";
+    internal const string BuildTestsStep = "Build the SqlDom test assembly on .NET 8";
+    internal const string RunTestsStep = "Run the complete SqlDom unit-test suite";
+    internal const string RoslynStep = "Run scoped Roslyn NetAnalyzers";
+    internal const string SemgrepStep = "Run Semgrep rules";
+
+    // Raw files retained for risk signals; everything else is only checksum-verified.
+    internal static readonly string[] RetainedFiles = ["coverage.cobertura.xml", "semgrep.sarif", "roslyn.log"];
+
+    private sealed record Source(string Key, string ArtifactName, string ManifestCheck, string ManifestPlatform,
+        string JobName, (string Check, string Platform, string[] Steps, bool UseManifestConclusion)[] Checks);
+
+    internal static string ArtifactSuffix(AdmittedReview admission) =>
+        $"{admission.RepositoryId}-pr{admission.PullRequest}-{admission.HeadSha}-run{admission.ValidationRunId}-attempt{admission.ValidationAttempt}";
+
     public async Task<IngestedEvidence> CollectAsync(AdmittedReview admission, CancellationToken cancellationToken)
     {
         if (artifactHttp.Timeout == Timeout.InfiniteTimeSpan || admission.Repository != api.Repository)
@@ -89,32 +122,42 @@ public sealed class GitHubReviewEvidence(GitHubReviewApi api, HttpClient artifac
         JsonElement[] artifacts = await api.ListAsync($"{api.Route}/actions/runs/{admission.ValidationRunId}/artifacts", "artifacts", cancellationToken);
         JsonElement[] jobs = await api.ListAsync(
             $"{api.Route}/actions/runs/{admission.ValidationRunId}/attempts/{admission.ValidationAttempt}/jobs", "jobs", cancellationToken);
+        string suffix = ArtifactSuffix(admission);
+        Source[] sources =
+        [
+            .. new[] { "windows", "ubuntu" }.Select(platform => new Source(
+                "test-" + platform, $"ut-scriptdom-{suffix}-{platform}-latest", "test", platform, $"build-and-test ({platform}-latest)",
+                [("build", platform, [BuildScriptDomStep, BuildTestsStep], false), ("test", platform, [RunTestsStep], true)])),
+            new Source("static-analysis", $"static-analysis-{suffix}", "static-analysis", "ubuntu", "static-analysis",
+                [("roslyn", "independent", [RoslynStep], false), ("semgrep", "independent", [SemgrepStep], false)])
+        ];
+        var identity = new EvidenceIdentity(admission.Repository, admission.PullRequest, admission.HeadSha,
+            admission.ValidationRunId, admission.ValidationAttempt);
         List<CheckResult> checks = [];
         List<string> blockers = [];
-        foreach ((string check, string platform) in CheckPolicy.Required)
+        Dictionary<string, byte[]> files = new(StringComparer.Ordinal);
+        foreach (Source source in sources)
         {
-            string os = platform == "independent" ? platform : platform == "windows" ? "windows-latest" : "ubuntu-latest";
-            string name = $"{check}-{os}-{admission.HeadSha}-{admission.ValidationAttempt}";
-            JsonElement[] candidates = artifacts.Where(a => a.GetProperty("name").GetString() == name).ToArray();
+            JsonElement[] candidates = artifacts.Where(a => a.GetProperty("name").GetString() == source.ArtifactName).ToArray();
             if (candidates.Length != 1)
             {
-                blockers.Add($"Required {check}/{platform} artifact is missing or duplicated.");
+                blockers.AddRange(source.Checks.Select(c => $"Required {c.Check}/{c.Platform} artifact is missing or duplicated."));
                 continue;
             }
-            string jobName = platform == "independent" ? check : $"{check} ({os})";
-            JsonElement[] matchingJobs = jobs.Where(j => j.GetProperty("name").GetString() == jobName).ToArray();
+            JsonElement[] matchingJobs = jobs.Where(j => j.GetProperty("name").GetString() == source.JobName).ToArray();
             if (matchingJobs.Length != 1 || matchingJobs[0].GetProperty("status").GetString() != "completed"
                 || matchingJobs[0].GetProperty("conclusion").GetString() != "success"
                 || matchingJobs[0].GetProperty("run_id").GetInt64() != admission.ValidationRunId)
                 throw new ContractException("Evidence does not have one successful authoritative job in the admitted attempt.");
-            string stepName = check == "build" ? "Build"
-                : check == "test" ? platform == "windows" ? "Run tests Windows" : "Run tests Linux"
-                : check == "semgrep" ? "Run Semgrep" : "Run Roslyn";
-            JsonElement[] steps = matchingJobs[0].GetProperty("steps").EnumerateArray()
-                .Where(s => s.GetProperty("name").GetString() == stepName).ToArray();
-            if (steps.Length != 1 || steps[0].GetProperty("status").GetString() != "completed"
-                || steps[0].GetProperty("conclusion").GetString() != "success")
-                throw new ContractException("Required validation step is missing, skipped, or unsuccessful.");
+            JsonElement[] steps = matchingJobs[0].GetProperty("steps").EnumerateArray().ToArray();
+            foreach (var check in source.Checks)
+            foreach (string stepName in check.Steps)
+            {
+                JsonElement[] matchingSteps = steps.Where(s => s.GetProperty("name").GetString() == stepName).ToArray();
+                if (matchingSteps.Length != 1 || matchingSteps[0].GetProperty("status").GetString() != "completed"
+                    || matchingSteps[0].GetProperty("conclusion").GetString() != "success")
+                    throw new ContractException("Required validation step is missing, skipped, or unsuccessful.");
+            }
             JsonElement artifact = candidates[0];
             long id = artifact.GetProperty("id").GetInt64();
             if (id <= 0 || artifact.GetProperty("expired").GetBoolean()
@@ -125,12 +168,16 @@ public sealed class GitHubReviewEvidence(GitHubReviewApi api, HttpClient artifac
                 || artifact.GetProperty("workflow_run").GetProperty("head_sha").GetString() != admission.HeadSha)
                 throw new ContractException("Artifact is expired, oversized, or belongs to a different run/repository/head.");
             byte[] zip = await DownloadAsync(id, cancellationToken);
-            var identity = new EvidenceIdentity(admission.Repository, admission.PullRequest, admission.HeadSha,
-                admission.ValidationRunId, admission.ValidationAttempt);
-            checks.Add(ReviewEvidenceArchive.Verify(zip, identity, check, platform, $"actions-artifact:{id}"));
+            VerifiedArchive verified = ReviewEvidenceArchive.Open(zip, identity, source.ManifestCheck, source.ManifestPlatform,
+                path => RetainedFiles.Contains(path.Split('/')[^1], StringComparer.Ordinal));
+            foreach (var check in source.Checks)
+                checks.Add(new("1.0", admission.HeadSha, check.Check, check.Platform,
+                    check.UseManifestConclusion ? verified.Conclusion : "passed", $"actions-artifact:{id}:{check.Check}-{check.Platform}"));
+            foreach ((string path, byte[] bytes) in verified.Files)
+                files.Add($"{source.Key}/{path}", bytes);
         }
         blockers.AddRange(CheckPolicy.Blockers(admission.HeadSha, checks));
-        return new(checks.ToArray(), blockers.Distinct(StringComparer.Ordinal).ToArray());
+        return new(checks.ToArray(), blockers.Distinct(StringComparer.Ordinal).ToArray()) { Files = files };
     }
 
     private async Task<byte[]> DownloadAsync(long artifactId, CancellationToken cancellationToken)

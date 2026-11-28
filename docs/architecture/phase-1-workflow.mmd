@@ -1,12 +1,12 @@
 flowchart TD
     contributor["Contributor opens or updates a pull request"] --> draft{"Draft pull request?"}
     draft -- Yes --> wait["Skip validation requiring an active review; no model invocation"]
-    draft -- No --> checks["GitHub Actions validation on the PR revision"]
+    draft -- No --> checks["GitHub Actions validation on the PR head commit"]
 
     subgraph untrusted["Untrusted validation boundary"]
         checks --> matrix["Build and test on Windows and Ubuntu"]
         matrix --> analyzers["Roslyn / Semgrep checks when configured"]
-        analyzers --> evidence["Upload bounded logs and SHA/run/attempt-bound evidence manifests"]
+        analyzers --> evidence["Upload bounded logs, Ubuntu coverage, and SHA/run/attempt-bound evidence manifests"]
     end
 
     evidence --> pass{"All required checks pass for the current PR head?"}
@@ -14,27 +14,28 @@ flowchart TD
     pass -- Yes --> authorization{"Explicit authorized maintainer action, current SHA, and approved environment?"}
     authorization -- No --> stop
 
-    subgraph phase1["Phase 1: current preparation/report-only behavior"]
-        authorization --> trusted["Use trusted default-branch workflow and configuration"]
+    subgraph trustedReview["Trusted label-triggered review (adversarial-review workflow)"]
+        authorization --> trusted["Use trusted default-branch workflow and configuration; never run PR code"]
         trusted --> verify["Read GitHub metadata; validate artifact origin, SHA, run attempt, completeness, checksums, and bounds"]
-        verify --> ready["Create a sanitized preparation/audit artifact"]
-        ready --> noInference["Current prepare workflow performs no inference and does not change code, approve, label, or merge"]
+        verify --> budgets["Reserve approved round, token, time, and spend budgets in the ledger"]
+        budgets --> review["Up to 3 Copilot SDK review rounds with bounded untrusted context; no tools or repository writes"]
+        review --> signals["Collect changed lines, added-line coverage, findings, and warnings for the same SHA"]
+        signals --> jev["TypeSafe JEV classifies overall risk as low, mid, or high"]
+        jev --> report["Publish one audit comment and JSON artifact; persist spend to the ledger branch"]
+        report --> eligible{"Complete audit, JEV low, and no unresolved high finding?"}
+        eligible -- Yes --> lowRisk["Label adversarial-review:low-risk and enable head-bound auto-merge"]
+        eligible -- No --> humanLabel["Label adversarial-review:human-review"]
     end
 
-    subgraph future["Future gated review; disabled until policy and deployment are approved"]
-        ready -. "Only after activation gates" .-> budgets["Reserve approved round, time, token, and spend budgets"]
-        budgets --> review["Send bounded untrusted context to configured Copilot SDK model; no tools or repository writes"]
-        review --> validate["Validate structured response and deterministic policy; retry/rotate only within reserved limits"]
-        validate --> report["Publish a redacted advisory report and auditable model-round metadata"]
-    end
-
-    subgraph merge["Independent human-controlled integration"]
+    subgraph merge["Integration under branch protection"]
         checks --> protect["main requires real Windows/Ubuntu checks and one non-author approval"]
         analyzers -. "Required status check" .-> protect
-        protect --> human["Peer reviewer inspects diff, checks, and advisory evidence"]
+        protect --> human["Peer reviewer inspects diff, checks, and audit comment"]
+        humanLabel --> human
+        lowRisk --> human
         human --> decision{"Human approval and all required policies satisfied?"}
         decision -- No --> revise["Request changes or keep PR open"]
-        decision -- Yes --> mergePR["Maintainer merges; no bot approval or automatic merge"]
+        decision -- Yes --> mergePR["GitHub auto-merge completes, or a maintainer merges"]
     end
 
     subgraph metrics["Read-only historical measurement"]
@@ -46,7 +47,5 @@ flowchart TD
 
     classDef untrusted fill:#ffe4df,stroke:#a63a24,color:#111
     classDef trusted fill:#e1f3e5,stroke:#237a3b,color:#111
-    classDef future fill:#fff3cd,stroke:#8a6d3b,color:#111
     class checks,matrix,analyzers,evidence untrusted
-    class trusted,verify,ready,noInference trusted
-    class budgets,review,validate,report future
+    class trusted,verify,budgets,review,signals,jev,report,lowRisk,humanLabel trusted

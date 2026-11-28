@@ -102,6 +102,10 @@ public static class Contracts
         if (audit.Status == "complete" && (incompleteRounds || (!allowLegacyCompleteHighRisk && elevatedRisk)
             || CheckPolicy.Blockers(audit.Run.HeadSha, audit.Checks).Length != 0))
             throw new ContractException("A complete audit requires all expected rounds and mandatory checks.");
+        if (audit.Risk is { Decision.EligibleForLowRiskLabel: true } risk
+            && (audit.Status != "complete" || elevatedRisk || risk.Assessment is not { Status: "assessed", Classification: "low" }
+                || risk.Signals is null or { HasUnresolvedHighOrCriticalFinding: true } || risk.Missing.Length != 0))
+            throw new ContractException("Low-risk eligibility requires a complete audit and an assessed low classification without blockers.");
     }
 
     private static void ValidateFinding(Finding finding)
@@ -130,7 +134,7 @@ public static class Contracts
 
     private static JsonSchema LoadSchema(string name)
     {
-        if (name is not ("contracts" or "finding" or "check-result" or "review-run" or "audit-report" or "configuration" or "evidence-manifest" or "reviewer-output" or "review-context" or "preparation-failure"))
+        if (name is not ("contracts" or "finding" or "check-result" or "review-run" or "audit-report" or "configuration" or "evidence-manifest" or "reviewer-output" or "review-context" or "preparation-failure" or "risk-rubric" or "risk-signals"))
             throw new ArgumentException("Unknown schema name.", nameof(name));
         var assembly = typeof(Contracts).Assembly;
         string resourceName = assembly.GetManifestResourceNames()
@@ -183,4 +187,10 @@ public sealed record ReviewRound(
 public sealed record AuditReport(
     string SchemaVersion, string Mode, string Calibration, ReviewRun Run, CheckResult[] Checks,
     Finding[] Findings, ReviewRound[] Rounds, int ExpectedRounds, string Status, decimal? RiskScore,
-    string[] Blockers, string[] Limitations);
+    string[] Blockers, string[] Limitations,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] RiskSection? Risk = null);
+
+// Outcome of the JEV risk step. LabelOutcome and AutoMergeOutcome record what was done on GitHub.
+public sealed record RiskSection(
+    string RubricVersion, RiskSignals? Signals, RiskFactors? Factors, JevRiskAssessment? Assessment,
+    RiskDecision Decision, string[] Missing, string? Label, string LabelOutcome, string AutoMergeOutcome);

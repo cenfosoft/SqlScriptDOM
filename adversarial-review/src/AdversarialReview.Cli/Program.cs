@@ -111,6 +111,9 @@ internal static class ReviewCommand
                         Console.WriteLine("Preparation report written. No inference, authorization consumption, or PR publication performed.");
                     }
                     return 0;
+                case ["run-review", string reviewConfigPath, string rubricPath, string promptPath, string guidancePath,
+                    string ledgerPath, string reviewOutputDirectory]:
+                    return await RunReviewAsync(reviewConfigPath, rubricPath, promptPath, guidancePath, ledgerPath, reviewOutputDirectory);
                 case ["list-models"]:
                     string? copilotToken = Environment.GetEnvironmentVariable("COPILOT_GITHUB_TOKEN");
                     if (string.IsNullOrWhiteSpace(copilotToken))
@@ -142,6 +145,13 @@ internal static class ReviewCommand
                         executionBlockers = config.ExecutionBlockers()
                     }, Contracts.JsonOptions));
                     return 0;
+                case ["validate-risk-rubric", string path]:
+                    RiskRubric rubric = RiskRubric.Parse(ReadDocument(path));
+                    Console.WriteLine($"Valid risk rubric: {rubric.Version}. JEV execution and merge readiness remain disabled.");
+                    return 0;
+                case ["assess-risk", string rubricPath, string signalsPath, string assessmentPath, .. string[] options]
+                    when options is [] or ["--dry-run"]:
+                    return await AssessRiskAsync(rubricPath, signalsPath, assessmentPath, dryRun: options.Length == 1);
                 case ["validate", string schema, string path]:
                     Contracts.Validate(ReadDocument(path), schema);
                     Console.WriteLine($"Valid {schema} document (schema {Contracts.Version}).");
@@ -159,7 +169,7 @@ internal static class ReviewCommand
                     Console.WriteLine("SHA-bound evidence manifest written. Authenticity still requires trusted GitHub metadata verification.");
                     return 0;
                 default:
-                    Console.Error.WriteLine("Usage: prepare-review <config.json> <output-directory> | list-models | validate-config <path> | validate <schema-name> <path> | render <audit.json> <output.md> | baseline <months> <max-pages> phase1-human-nondraft-merged-only <output.json> <output.md> <owner/repo> <owner/repo> [additional owner/repo ...] | manifest <directory> <check> <platform> <conclusion>");
+                    Console.Error.WriteLine("Usage: prepare-review <config.json> <output-directory> | run-review <config.json> <risk-rubric.json> <reviewer-prompt.md> <guidance.md> <ledger.db> <output-directory> | list-models | validate-config <path> | validate-risk-rubric <path> | assess-risk <rubric.json> <signals.json> <output.json> [--dry-run] | validate <schema-name> <path> | render <audit.json> <output.md> | baseline <months> <max-pages> phase1-human-nondraft-merged-only <output.json> <output.md> <owner/repo> <owner/repo> [additional owner/repo ...] | manifest <directory> <check> <platform> <conclusion>");
                     return 2;
             }
         }
@@ -189,16 +199,157 @@ internal static class ReviewCommand
         }
     }
 
+    // Trusted label-triggered pipeline. It reads PR data only through the GitHub API and never executes PR code.
+    private static async Task<int> RunReviewAsync(
+        string configPath, string rubricPath, string promptPath, string guidancePath, string ledgerPath, string outputDirectory)
+    {
+        static string Required(string key) => Environment.GetEnvironmentVariable(key)
+            ?? throw new ContractException($"Required trusted Actions metadata is missing: {key}.");
+        ReviewConfiguration config = ReviewConfiguration.Parse(ReadDocument(configPath));
+        RiskRubric rubric = RiskRubric.Parse(ReadDocument(rubricPath));
+        string prompt = ReviewerPrompt.Load(ReadDocument(promptPath));
+        string guidance = ReadDocument(guidancePath);
+        LabelSnapshot snapshot = LabelSnapshot.Parse(ReadDocument(Required("GITHUB_EVENT_PATH")),
+            Required("GITHUB_EVENT_NAME"), Required("GITHUB_REPOSITORY"), Required("GITHUB_ACTOR"), config);
+        string configurationSha = Required("GITHUB_SHA");
+        if (!Contracts.IsSha(configurationSha)) throw new ContractException("Trusted checkout revision is not a valid SHA.");
+        long runId = long.Parse(Required("GITHUB_RUN_ID"), System.Globalization.CultureInfo.InvariantCulture);
+        int runAttempt = int.Parse(Required("GITHUB_RUN_ATTEMPT"), System.Globalization.CultureInfo.InvariantCulture);
+        string githubToken = Required("GH_TOKEN");
+        string copilotToken = Required("COPILOT_GITHUB_TOKEN");
+        if (copilotToken.StartsWith("ghp_", StringComparison.Ordinal))
+            throw new ContractException("Classic PATs are unsupported. Use a fine-grained PAT with Copilot Requests permission.");
+        string? jevKey = Environment.GetEnvironmentVariable("JEV_API_KEY");
+        string[] secrets = new[] { githubToken, copilotToken, jevKey }.Where(s => !string.IsNullOrEmpty(s)).ToArray()!;
+        if (config.CopilotBilling is not CopilotBillingSettings billing)
+            throw new ContractException("Copilot billing conversion is unset.");
+
+        Directory.CreateDirectory(outputDirectory);
+        string hostDirectory = Path.GetFullPath(Path.Combine(outputDirectory, "host"));
+        string copilotState = Path.Combine(Path.GetTempPath(), $"scriptdom-copilot-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(hostDirectory);
+        Directory.CreateDirectory(copilotState);
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(copilotState, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+        using var apiHandler = new HttpClientHandler { AllowAutoRedirect = false };
+        using var artifactHandler = new HttpClientHandler { AllowAutoRedirect = false };
+        using var apiHttp = new HttpClient(apiHandler) { Timeout = TimeSpan.FromSeconds(30) };
+        using var artifactHttp = new HttpClient(artifactHandler) { Timeout = TimeSpan.FromSeconds(60) };
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(25));
+        CancellationToken token = cancellation.Token;
+        try
+        {
+            var api = new GitHubReviewApi(apiHttp, githubToken, snapshot.Repository);
+            var actions = new GitHubPullRequestActions(apiHttp, githubToken, snapshot.Repository);
+            AdmissionRequest request = await ReviewPreparation.ResolveAdmissionRequestAsync(api, snapshot, configurationSha, token);
+            bool environmentApproved = await actions.IsEnvironmentApprovedAsync(runId, config.Environment, token);
+
+            await using var runtime = new CopilotRuntime(copilotState, copilotState, copilotToken);
+            CopilotCatalog catalog = await runtime.DiscoverAsync(token);
+            var provider = new CopilotReviewProvider(runtime, catalog,
+                new CopilotBillingConversion(billing.NanoUnitsPerCredit, billing.UsdPerCredit), prompt);
+            var evidenceService = new GitHubReviewEvidence(api, artifactHttp);
+            var host = new TrustedReviewHost(new TrustedAdmission(api), evidenceService,
+                new SqliteReviewSpendLedger(Path.GetFullPath(ledgerPath)), provider, new ReviewHostStorage(hostDirectory));
+            var context = new GitHubReviewContext(api);
+            IngestedEvidence? evidence = null;
+            AuditReport report = await host.RunAsync(config, request, runId, runAttempt, environmentApproved,
+                (admitted, ct) => context.BuildAsync(admitted, guidance, evidence!.Checks, ct),
+                ct => context.ReadStateAsync(snapshot.PullRequest, ct), secrets, token,
+                (_, collected) => evidence = collected);
+
+            PullRequestFile[] files = RiskSignalCollector.ParseFiles(
+                await api.ListAsync($"{api.Route}/pulls/{snapshot.PullRequest}/files", null, token));
+            using var jevHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(rubric.JevTimeoutSeconds + 5) };
+            JevRiskAssessor? assessor = string.IsNullOrWhiteSpace(jevKey) ? null : new JevRiskAssessor(jevHttp, jevKey);
+            RiskSection risk = await RiskStage.EvaluateAsync(report, files,
+                evidence?.Files ?? new Dictionary<string, byte[]>(), rubric, assessor, token);
+            report = report with { Risk = risk };
+
+            // Publish first: the spec requires a published audit trail before any merge-readiness change.
+            var publisher = new GitHubAuditPublisher(apiHttp, githubToken);
+            PublishedComment published = await publisher.PublishAsync(report, secrets, token);
+            if (!published.MarkedStale && report.Status != "stale")
+            {
+                string labelOutcome, mergeOutcome = risk.AutoMergeOutcome;
+                try { labelOutcome = await actions.ApplyRiskLabelAsync(snapshot.PullRequest, report.Run.HeadSha, risk.Label!, token); }
+                catch (Exception error) when (error is HttpRequestException or ContractException) { labelOutcome = "failed"; }
+                try
+                {
+                    mergeOutcome = !risk.Decision.EligibleForLowRiskLabel
+                        ? await actions.DisableAutoMergeAsync(snapshot.PullRequest, report.Run.HeadSha, token)
+                        : labelOutcome == "applied"
+                            ? await actions.EnableAutoMergeAsync(snapshot.PullRequest, report.Run.HeadSha, token) : "skipped";
+                }
+                catch (Exception error) when (error is HttpRequestException or ContractException) { mergeOutcome = "failed"; }
+                report = report with { Risk = risk with { LabelOutcome = labelOutcome, AutoMergeOutcome = mergeOutcome } };
+                await publisher.PublishAsync(report, secrets, token);
+            }
+            else
+                report = report with { Risk = risk with { LabelOutcome = "skipped", AutoMergeOutcome = "skipped" } };
+
+            string json = Contracts.Write(report, "audit-report");
+            ReportRenderer.RejectCredentialData(json, secrets);
+            await WriteNewFileAsync(Path.Combine(outputDirectory, "audit.json"), json);
+            await WriteNewFileAsync(Path.Combine(outputDirectory, "report.md"), ReportRenderer.Render(report, secrets));
+            Console.WriteLine($"Review {report.Status}; risk {risk.Assessment?.Classification ?? "not assessed"}; " +
+                $"label {risk.Label} ({report.Risk!.LabelOutcome}); automatic merge {report.Risk.AutoMergeOutcome}.");
+            return 0;
+        }
+        finally
+        {
+            try { Directory.Delete(copilotState, recursive: true); }
+            catch (IOException) { Console.Error.WriteLine("Copilot private state cleanup failed; the runner is discarded after the job."); }
+        }
+    }
+
+    private static async Task<int> AssessRiskAsync(string rubricPath, string signalsPath, string outputPath, bool dryRun)
+    {
+        RiskRubric rubric = RiskRubric.Parse(ReadDocument(rubricPath));
+        RiskSignals signals = Contracts.Read<RiskSignals>(ReadDocument(signalsPath), "risk-signals");
+        RiskFactors factors = rubric.Classify(signals);
+        if (dryRun)
+        {
+            // Shows exactly what would be sent; no credential is read and no request is made.
+            await WriteNewFileAsync(outputPath, JevRiskAssessor.BuildRequest(rubric, factors));
+            Console.WriteLine("Dry run: JEV request payload written. No credential was read and no request was sent.");
+            return 0;
+        }
+        string? apiKey = Environment.GetEnvironmentVariable("JEV_API_KEY");
+        if (string.IsNullOrWhiteSpace(apiKey))
+            throw new ContractException("Set JEV_API_KEY from a protected secret; never pass keys as CLI arguments.");
+        using var handler = new HttpClientHandler { AllowAutoRedirect = false };
+        using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(rubric.JevTimeoutSeconds + 5) };
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        JevRiskAssessment assessment = await new JevRiskAssessor(http, apiKey).AssessAsync(rubric, factors, cancellation.Token);
+        RiskDecision decision = JevRiskAssessor.Decide(factors, assessment);
+        string json = JsonSerializer.Serialize(new { schemaVersion = "1.0", factors, assessment, decision }, Contracts.JsonOptions);
+        ReportRenderer.RejectCredentialData(json, [apiKey]);
+        await WriteNewFileAsync(outputPath, json);
+        Console.WriteLine($"JEV assessment: {assessment.Status}; classification: {assessment.Classification ?? "none"}; " +
+            $"eligible for low-risk label: {decision.EligibleForLowRiskLabel}. Labeling and merge remain disabled pending calibration.");
+        return assessment.Status == "assessed" ? 0 : 3;
+    }
+
     private static async Task RecordPreparationFailureAsync(string[] args)
     {
-        if (args is not ["prepare-review", _, string directory]) return;
+        string? directory = args switch
+        {
+            ["prepare-review", _, string output] => output,
+            ["run-review", _, _, _, _, _, string output] => output,
+            _ => null
+        };
+        if (directory is null) return;
         Directory.CreateDirectory(directory);
         await WriteNewFileAsync(Path.Combine(directory, "failure.json"), Contracts.Write(new
         {
             schemaVersion = "1.0",
             status = "failed",
-            stage = "preparation",
-            message = "Trusted preparation failed. Consult sanitized job diagnostics; no inference or authorization consumption was performed."
+            stage = args[0] == "run-review" ? "review" : "preparation",
+            message = args[0] == "run-review"
+                ? "Trusted review failed. Consult sanitized job diagnostics and the spend ledger; any reserved spend remains held."
+                : "Trusted preparation failed. Consult sanitized job diagnostics; no inference or authorization consumption was performed."
         }, "preparation-failure"));
     }
 

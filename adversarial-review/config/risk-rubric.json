@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "1.0",
+  "version": "initial",
+  "changedLinesLowMaximum": 100,
+  "changedLinesMidMaximum": 1000,
+  "coverageLowMinimumPercent": 100,
+  "coverageHighMaximumPercent": 80,
+  "lowFindingsLowMaximum": 2,
+  "mediumFindingsMidMaximum": 1,
+  "warningsLowMaximum": 1,
+  "warningsMidMaximum": 2,
+  "jevModel": "jev-1.14.0",
+  "jevTimeoutSeconds": 15
+}

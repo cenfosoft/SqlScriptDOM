@@ -78,4 +78,18 @@ public sealed class ReviewerTests
         Assert.ThrowsException<ContractException>(() => ReviewerOutput.Parse(Output(
             Fixture() with { Description = "secret-value" }), Context(), ["secret-value"]));
     }
+
+    [TestMethod]
+    public void ShippedPromptStatesEveryRequiredFindingPropertyWithoutFrontMatter()
+    {
+        string prompt = ReviewerPrompt.Load(File.ReadAllText(
+            Path.Combine(AppContext.BaseDirectory, "prompts/adversarial-review.prompt.md")));
+        Assert.IsFalse(prompt.StartsWith("---", StringComparison.Ordinal));
+        string[] required = ["schemaVersion", "id", "headSha", "source", "category", "severity", "confidence",
+            "title", "description", "evidence", "recommendation", "disposition", "kind", "reference", "detail", "startLine", "endLine"];
+        foreach (string property in required)
+            StringAssert.Contains(prompt, $"`{property}`", property);
+        Assert.ThrowsException<ContractException>(() => ReviewerPrompt.Load("---\ndescription: x\nbody"));
+        Assert.AreEqual("body", ReviewerPrompt.Load("---\r\ndescription: x\r\n---\r\nbody\r\n"));
+    }
 }

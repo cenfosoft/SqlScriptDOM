@@ -42,23 +42,7 @@ public sealed class ReviewPreparation(GitHubReviewApi api, GitHubReviewEvidence 
             || snapshot.Label != config.AuthorizationLabel
             || !config.AuthorizedActors.Contains(snapshot.Actor, StringComparer.OrdinalIgnoreCase))
             throw new ContractException("Webhook snapshot is outside trusted preparation scope.");
-        JsonElement[] events = await api.ListAsync($"{api.Route}/issues/{snapshot.PullRequest}/events", null, cancellationToken);
-        JsonElement[] matches = events.Where(e => e.GetProperty("event").GetString() == "labeled"
-            && e.GetProperty("label").GetProperty("name").GetString() == snapshot.Label
-            && string.Equals(e.GetProperty("actor").GetProperty("login").GetString(), snapshot.Actor, StringComparison.OrdinalIgnoreCase)
-            && e.GetProperty("created_at").GetDateTimeOffset() == snapshot.UpdatedAt).ToArray();
-        if (matches.Length != 1)
-            throw new ContractException("Cannot uniquely correlate webhook update time to a label event; reapply after CI completes.");
-        JsonElement[] runs = await api.ListAsync(
-            $"{api.Route}/actions/workflows/pr-validation.yml/runs?event=pull_request&head_sha={snapshot.HeadSha}", "workflow_runs", cancellationToken);
-        JsonElement[] candidates = runs.Where(r => r.GetProperty("head_sha").GetString() == snapshot.HeadSha)
-            .OrderByDescending(r => r.GetProperty("id").GetInt64()).ToArray();
-        if (candidates.Length == 0)
-            throw new ContractException("No authoritative validation run exists for this head; reapply the label after CI completes.");
-        JsonElement selected = candidates[0];
-        var request = new AdmissionRequest(snapshot.PullRequest, snapshot.HeadSha, snapshot.Actor,
-            matches[0].GetProperty("id").GetInt64(), selected.GetProperty("id").GetInt64(),
-            selected.GetProperty("run_attempt").GetInt32(), configurationSha);
+        AdmissionRequest request = await ResolveAdmissionRequestAsync(api, snapshot, configurationSha, cancellationToken);
         AdmittedReview admitted = await new TrustedAdmission(api).VerifyAsync(config, request, cancellationToken);
         IngestedEvidence collected = await evidence.CollectAsync(admitted, cancellationToken);
         // Check the head again after bounded downloads; never report stale evidence as current.
@@ -78,5 +62,28 @@ public sealed class ReviewPreparation(GitHubReviewApi api, GitHubReviewEvidence 
             report = report with { Blockers = [.. report.Blockers, "PR is now closed or draft."] };
         Contracts.Write(report, "audit-report");
         return report;
+    }
+
+    // Correlates the trusted label webhook with its label event and the newest validation run for the head.
+    public static async Task<AdmissionRequest> ResolveAdmissionRequestAsync(
+        GitHubReviewApi api, LabelSnapshot snapshot, string configurationSha, CancellationToken cancellationToken)
+    {
+        JsonElement[] events = await api.ListAsync($"{api.Route}/issues/{snapshot.PullRequest}/events", null, cancellationToken);
+        JsonElement[] matches = events.Where(e => e.GetProperty("event").GetString() == "labeled"
+            && e.GetProperty("label").GetProperty("name").GetString() == snapshot.Label
+            && string.Equals(e.GetProperty("actor").GetProperty("login").GetString(), snapshot.Actor, StringComparison.OrdinalIgnoreCase)
+            && e.GetProperty("created_at").GetDateTimeOffset() == snapshot.UpdatedAt).ToArray();
+        if (matches.Length != 1)
+            throw new ContractException("Cannot uniquely correlate webhook update time to a label event; reapply after CI completes.");
+        JsonElement[] runs = await api.ListAsync(
+            $"{api.Route}/actions/workflows/pr-validation.yml/runs?event=pull_request&head_sha={snapshot.HeadSha}", "workflow_runs", cancellationToken);
+        JsonElement[] candidates = runs.Where(r => r.GetProperty("head_sha").GetString() == snapshot.HeadSha)
+            .OrderByDescending(r => r.GetProperty("id").GetInt64()).ToArray();
+        if (candidates.Length == 0)
+            throw new ContractException("No authoritative validation run exists for this head; reapply the label after CI completes.");
+        JsonElement selected = candidates[0];
+        return new AdmissionRequest(snapshot.PullRequest, snapshot.HeadSha, snapshot.Actor,
+            matches[0].GetProperty("id").GetInt64(), selected.GetProperty("id").GetInt64(),
+            selected.GetProperty("run_attempt").GetInt32(), configurationSha);
     }
 }

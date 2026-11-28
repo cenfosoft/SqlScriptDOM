@@ -487,7 +487,7 @@ inputs are approved; this is not a complete Phase 1 deployment.
   workflows/
     pr-validation.yml
     adversarial-review-validation.yml
-    adversarial-review-prepare.yml
+    adversarial-review.yml
 adversarial-review/
   Directory.Build.props
   README.md

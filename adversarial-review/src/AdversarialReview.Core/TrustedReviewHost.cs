@@ -78,11 +78,13 @@ public sealed class TrustedReviewHost(
         ReviewConfiguration configuration, AdmissionRequest request, long reportingRunId, int reportingAttempt,
         bool environmentApproved, Func<AdmittedReview, CancellationToken, Task<ReviewContext>> buildContext,
         Func<CancellationToken, Task<PullRequestState>> readCurrentState,
-        IEnumerable<string> knownSecrets, CancellationToken cancellationToken)
+        IEnumerable<string> knownSecrets, CancellationToken cancellationToken,
+        Action<AdmittedReview, IngestedEvidence>? onEvidence = null)
     {
         AdmittedReview admission = await admissionService.VerifyAsync(configuration, request, cancellationToken);
         using FileStream prLock = storage.Acquire(admission.Repository, admission.PullRequest);
         IngestedEvidence evidence = await evidenceService.CollectAsync(admission, cancellationToken);
+        onEvidence?.Invoke(admission, evidence);
         ReviewRun run = CreateRun(admission, reportingRunId, reportingAttempt);
         string[] secrets = knownSecrets.ToArray();
         string[] blockers = [.. configuration.ExecutionBlockers(), .. evidence.Blockers];

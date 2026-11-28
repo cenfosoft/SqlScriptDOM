@@ -33,6 +33,27 @@ public sealed class IngestionTests
         return output.ToArray();
     }
 
+    internal static byte[] ZipWith(string check, string platform, Dictionary<string, string>? files)
+    {
+        Dictionary<string, byte[]> contents = new(StringComparer.Ordinal)
+        {
+            ["raw.log"] = Encoding.UTF8.GetBytes("Raw deterministic evidence; never executed.")
+        };
+        foreach ((string path, string text) in files ?? []) contents[path] = Encoding.UTF8.GetBytes(text);
+        var manifest = new EvidenceManifest("1.0", new("owner/repo", 1, FoundationTests.Sha, 70, 2), check, platform, "passed",
+            contents.OrderBy(f => f.Key, StringComparer.Ordinal)
+                .Select(f => new EvidenceFile(f.Key, f.Value.Length, Convert.ToHexString(SHA256.HashData(f.Value)).ToLowerInvariant())).ToArray());
+        using MemoryStream output = new();
+        using (ZipArchive archive = new(output, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach ((string path, byte[] bytes) in contents)
+                using (Stream stream = archive.CreateEntry(path).Open()) stream.Write(bytes);
+            using StreamWriter writer = new(archive.CreateEntry("manifest.json").Open());
+            writer.Write(Contracts.Write(manifest, "evidence-manifest"));
+        }
+        return output.ToArray();
+    }
+
     [TestMethod]
     public void ValidArchiveNormalizesOnlyAfterIdentityAndChecksumsVerify()
     {
@@ -99,35 +120,41 @@ public sealed class IngestionTests
         public Dictionary<long, byte[]> Archives { get; } = [];
         public Uri? Redirect { get; set; }
 
-        public EvidenceHandler(bool complete = true)
+        public EvidenceHandler(bool complete = true, Dictionary<string, string>? extraFiles = null)
         {
-            int id = 1;
-            foreach ((string check, string platform) in CheckPolicy.Required)
+            string suffix = GitHubReviewEvidence.ArtifactSuffix(Admission());
+            var sources = new List<(string Key, string Artifact, string Job, string Check, string Platform, string[] Steps)>
             {
-                if (!complete && platform == "independent") continue;
-                string os = platform == "independent" ? platform : platform == "windows" ? "windows-latest" : "ubuntu-latest";
+                ("test-windows", $"ut-scriptdom-{suffix}-windows-latest", "build-and-test (windows-latest)", "test", "windows",
+                    [GitHubReviewEvidence.BuildScriptDomStep, GitHubReviewEvidence.BuildTestsStep, GitHubReviewEvidence.RunTestsStep]),
+                ("test-ubuntu", $"ut-scriptdom-{suffix}-ubuntu-latest", "build-and-test (ubuntu-latest)", "test", "ubuntu",
+                    [GitHubReviewEvidence.BuildScriptDomStep, GitHubReviewEvidence.BuildTestsStep, GitHubReviewEvidence.RunTestsStep]),
+            };
+            if (complete)
+                sources.Add(("static-analysis", $"static-analysis-{suffix}", "static-analysis", "static-analysis", "ubuntu",
+                    [GitHubReviewEvidence.RoslynStep, GitHubReviewEvidence.SemgrepStep]));
+            int id = 1;
+            foreach (var source in sources)
+            {
                 Artifacts.Add(new JsonObject
                 {
-                    ["id"] = id, ["name"] = $"{check}-{os}-{FoundationTests.Sha}-2",
+                    ["id"] = id, ["name"] = source.Artifact,
                     ["expired"] = false, ["size_in_bytes"] = 1000,
                     ["workflow_run"] = new JsonObject
                     {
                         ["id"] = 70, ["repository_id"] = 1, ["head_repository_id"] = 2, ["head_sha"] = FoundationTests.Sha
                     }
                 });
+                var steps = new JsonArray();
+                foreach (string step in source.Steps)
+                    steps.Add(new JsonObject { ["name"] = step, ["status"] = "completed", ["conclusion"] = "success" });
                 Jobs.Add(new JsonObject
                 {
-                    ["name"] = platform == "independent" ? check : $"{check} ({os})",
-                    ["run_id"] = 70, ["status"] = "completed", ["conclusion"] = "success",
-                    ["steps"] = new JsonArray(new JsonObject
-                    {
-                        ["name"] = check == "build" ? "Build" : check == "test"
-                            ? platform == "windows" ? "Run tests Windows" : "Run tests Linux"
-                            : check == "semgrep" ? "Run Semgrep" : "Run Roslyn",
-                        ["status"] = "completed", ["conclusion"] = "success"
-                    })
+                    ["name"] = source.Job, ["run_id"] = 70, ["status"] = "completed", ["conclusion"] = "success", ["steps"] = steps
                 });
-                Archives[id++] = Zip(check, platform);
+                Archives[id++] = ZipWith(source.Check, source.Platform,
+                    extraFiles?.Where(f => f.Key.StartsWith(source.Key + "/", StringComparison.Ordinal))
+                        .ToDictionary(f => f.Key[(source.Key.Length + 1)..], f => f.Value));
             }
         }
 
@@ -168,6 +195,7 @@ public sealed class IngestionTests
             Assert.AreEqual(complete ? 6 : 4, result.Checks.Length);
             Assert.AreEqual(complete, result.Blockers.Length == 0);
             if (!complete) StringAssert.Contains(string.Join(" ", result.Blockers), "semgrep");
+            Assert.AreEqual(complete ? 6 : 4, result.Checks.Select(c => c.Artifact).Distinct().Count());
         }
     }
 
@@ -212,7 +240,7 @@ public sealed class IngestionTests
     public async Task SignedStorageRedirectNeverReceivesGitHubCredentialAndUnsafeOriginsAreRejected()
     {
         using var handler = new EvidenceHandler();
-        using var storage = new StorageHandler(Zip());
+        using var storage = new StorageHandler(Zip("test", "windows"));
         using HttpClient apiHttp = new(handler);
         using HttpClient storageHttp = new(storage);
         var client = new GitHubReviewEvidence(AdmissionTests.Api(apiHttp), storageHttp);
@@ -224,7 +252,7 @@ public sealed class IngestionTests
         }
         Assert.AreEqual(0, storage.Calls);
         handler.Redirect = new("https://test.blob.core.windows.net/file?signature=test");
-        // First download is valid; second intentionally returns a build/windows archive for another check.
+        // First download is valid; the second returns the Windows test archive for the Ubuntu source.
         await Assert.ThrowsExceptionAsync<ContractException>(() => client.CollectAsync(Admission(), CancellationToken.None));
         Assert.AreEqual(2, storage.Calls);
     }
