@@ -51,7 +51,7 @@ public sealed class HostTests
     private static Task<ReviewContext> Context(AdmittedReview admission, CancellationToken _) => Task.FromResult(
         new ReviewContext(admission.HeadSha, admission.ConfigurationSha, "Trusted", "Diff", [],
             CheckPolicy.Required.Select(c => c.Name + "/" + c.Platform).ToArray(),
-            Enumerable.Range(1, 6).Select(i => $"actions-artifact:{i}").ToArray()));
+            CheckPolicy.Required.Select(c => $"actions-artifact:{(c.Platform == "windows" ? 1 : c.Platform == "ubuntu" ? 2 : 3)}:{c.Name}-{c.Platform}").ToArray()));
 
     private static async Task<string?> ReadFinalStatusAsync(string databasePath)
     {
