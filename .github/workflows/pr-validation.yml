@@ -84,6 +84,9 @@ jobs:
           dotnet test Test/SqlDom/UTSqlScriptDom.csproj -c Debug -f net8.0 --no-build --logger "trx;LogFileName=ut-scriptdom-${{ matrix.os }}.trx" --results-directory "${{ runner.temp }}/test-results" @coverage *> $log
           $exitCode = $LASTEXITCODE
           Get-Content -Path $log
+          # vstest also copies the report under <deployment>/In/<host>/ when a TRX logger is used; keep one copy.
+          Get-ChildItem -Path "${{ runner.temp }}/test-results" -Recurse -Filter "coverage.cobertura.xml" -File |
+            Where-Object { $_.FullName -match '[\/]In[\/]' } | Remove-Item
           # Evidence files are capped at 20 MiB; an oversized report is dropped and the risk step treats coverage as missing.
           Get-ChildItem -Path "${{ runner.temp }}/test-results" -Recurse -Filter "coverage.cobertura.xml" -File |
             Where-Object { $_.Length -gt 20MB } |

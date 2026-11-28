@@ -197,7 +197,7 @@
         "missing": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/text" } },
         "label": { "type": ["string", "null"], "maxLength": 50 },
         "labelOutcome": { "enum": ["pending", "applied", "failed", "skipped"] },
-        "autoMergeOutcome": { "enum": ["pending", "enabled", "failed", "not-eligible", "skipped"] }
+        "autoMergeOutcome": { "enum": ["pending", "enabled", "disabled", "failed", "not-eligible", "skipped"] }
       }
     }
   }

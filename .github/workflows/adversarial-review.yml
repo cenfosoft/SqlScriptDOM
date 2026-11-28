@@ -55,13 +55,20 @@ jobs:
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
           mkdir -p "$RUNNER_TEMP/ledger" && cd "$RUNNER_TEMP/ledger"
           git init -q && git remote add origin "https://github.com/${{ github.repository }}.git"
-          if git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" \
-               ls-remote --exit-code --heads origin "$LEDGER_BRANCH" > /dev/null; then
+          # Exit code 2 means the branch does not exist. Any other failure must stop the run:
+          # starting an empty ledger after a transient error would bypass the monthly budget.
+          status=0
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" \
+            ls-remote --exit-code --heads origin "$LEDGER_BRANCH" > /dev/null || status=$?
+          if [ "$status" -eq 0 ]; then
             git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" fetch -q --depth=1 origin "$LEDGER_BRANCH"
             git checkout -q -B "$LEDGER_BRANCH" FETCH_HEAD
-          else
+          elif [ "$status" -eq 2 ]; then
             echo "No ledger branch yet; starting an empty ledger."
             git checkout -q --orphan "$LEDGER_BRANCH"
+          else
+            echo "::error::Could not read the spend ledger branch (git exit $status); no review was run."
+            exit 1
           fi
       - name: Run adversarial review and risk assessment
         id: review

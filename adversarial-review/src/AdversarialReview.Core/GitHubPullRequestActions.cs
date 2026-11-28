@@ -58,21 +58,34 @@ public sealed class GitHubPullRequestActions
     // Enables GitHub auto-merge bound to the evaluated head; branch protection (including required reviews) still applies.
     public async Task<string> EnableAutoMergeAsync(int pullRequest, string headSha, CancellationToken cancellationToken)
     {
-        string nodeId = await RequireCurrentAsync(pullRequest, headSha, cancellationToken);
-        string body = JsonSerializer.Serialize(new
-        {
-            query = "mutation($id: ID!, $sha: GitObjectID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: MERGE, expectedHeadOid: $sha }) { pullRequest { number } } }",
-            variables = new { id = nodeId, sha = headSha }
-        });
-        using JsonDocument result = await RequestAsync(HttpMethod.Post, "graphql", body, cancellationToken);
+        (string nodeId, _) = await RequireCurrentAsync(pullRequest, headSha, cancellationToken);
+        return await MutateAsync("enablePullRequestAutoMerge",
+            "mutation($id: ID!, $sha: GitObjectID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: MERGE, expectedHeadOid: $sha }) { pullRequest { number } } }",
+            new { id = nodeId, sha = headSha }, "enabled", cancellationToken);
+    }
+
+    // A later non-eligible result must not leave auto-merge from an earlier eligible run in place.
+    public async Task<string> DisableAutoMergeAsync(int pullRequest, string headSha, CancellationToken cancellationToken)
+    {
+        (string nodeId, bool autoMergeEnabled) = await RequireCurrentAsync(pullRequest, headSha, cancellationToken);
+        if (!autoMergeEnabled) return "not-eligible";
+        return await MutateAsync("disablePullRequestAutoMerge",
+            "mutation($id: ID!) { disablePullRequestAutoMerge(input: { pullRequestId: $id }) { pullRequest { number } } }",
+            new { id = nodeId }, "disabled", cancellationToken);
+    }
+
+    private async Task<string> MutateAsync(string field, string query, object variables, string success, CancellationToken cancellationToken)
+    {
+        using JsonDocument result = await RequestAsync(HttpMethod.Post, "graphql",
+            JsonSerializer.Serialize(new { query, variables }), cancellationToken);
         if (result.RootElement.TryGetProperty("errors", out JsonElement errors) && errors.GetArrayLength() > 0)
             return "failed";
         return result.RootElement.TryGetProperty("data", out JsonElement data)
-            && data.TryGetProperty("enablePullRequestAutoMerge", out JsonElement enabled)
-            && enabled.ValueKind == JsonValueKind.Object ? "enabled" : "failed";
+            && data.TryGetProperty(field, out JsonElement payload)
+            && payload.ValueKind == JsonValueKind.Object ? success : "failed";
     }
 
-    private async Task<string> RequireCurrentAsync(int pullRequest, string headSha, CancellationToken cancellationToken)
+    private async Task<(string NodeId, bool AutoMergeEnabled)> RequireCurrentAsync(int pullRequest, string headSha, CancellationToken cancellationToken)
     {
         if (pullRequest <= 0 || !Contracts.IsSha(headSha)) throw new ContractException("A valid PR identity is required.");
         using JsonDocument pr = await RequestAsync(HttpMethod.Get, $"{route}/pulls/{pullRequest}", null, cancellationToken);
@@ -80,7 +93,8 @@ public sealed class GitHubPullRequestActions
         if (root.GetProperty("state").GetString() != "open" || root.GetProperty("draft").GetBoolean()
             || root.GetProperty("head").GetProperty("sha").GetString() != headSha)
             throw new ContractException("PR is closed, draft, or has a different head SHA; no label or merge change was made.");
-        return root.GetProperty("node_id").GetString() ?? throw new ContractException("GitHub PR node identity is missing.");
+        string nodeId = root.GetProperty("node_id").GetString() ?? throw new ContractException("GitHub PR node identity is missing.");
+        return (nodeId, root.TryGetProperty("auto_merge", out JsonElement autoMerge) && autoMerge.ValueKind == JsonValueKind.Object);
     }
 
     private async Task<JsonDocument> RequestAsync(HttpMethod method, string path, string? body, CancellationToken cancellationToken)

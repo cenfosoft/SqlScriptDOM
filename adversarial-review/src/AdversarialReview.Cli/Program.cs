@@ -275,15 +275,14 @@ internal static class ReviewCommand
                 string labelOutcome, mergeOutcome = risk.AutoMergeOutcome;
                 try { labelOutcome = await actions.ApplyRiskLabelAsync(snapshot.PullRequest, report.Run.HeadSha, risk.Label!, token); }
                 catch (Exception error) when (error is HttpRequestException or ContractException) { labelOutcome = "failed"; }
-                if (risk.Decision.EligibleForLowRiskLabel)
+                try
                 {
-                    try
-                    {
-                        mergeOutcome = labelOutcome == "applied"
+                    mergeOutcome = !risk.Decision.EligibleForLowRiskLabel
+                        ? await actions.DisableAutoMergeAsync(snapshot.PullRequest, report.Run.HeadSha, token)
+                        : labelOutcome == "applied"
                             ? await actions.EnableAutoMergeAsync(snapshot.PullRequest, report.Run.HeadSha, token) : "skipped";
-                    }
-                    catch (Exception error) when (error is HttpRequestException or ContractException) { mergeOutcome = "failed"; }
                 }
+                catch (Exception error) when (error is HttpRequestException or ContractException) { mergeOutcome = "failed"; }
                 report = report with { Risk = risk with { LabelOutcome = labelOutcome, AutoMergeOutcome = mergeOutcome } };
                 await publisher.PublishAsync(report, secrets, token);
             }

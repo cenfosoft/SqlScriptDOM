@@ -76,9 +76,11 @@ public static partial class RiskSignalCollector
     private static (int, int)? MeasureCoverage(
         IReadOnlyList<PullRequestFile> files, IReadOnlyDictionary<string, byte[]> evidenceFiles, List<string> missing)
     {
+        // With a TRX logger, vstest also copies the report under <deployment>/In/<host>/; ignore that copy.
         KeyValuePair<string, byte[]>[] reports = evidenceFiles
             .Where(f => f.Key.StartsWith("test-ubuntu/", StringComparison.Ordinal)
-                && f.Key.EndsWith("/coverage.cobertura.xml", StringComparison.Ordinal)).ToArray();
+                && f.Key.EndsWith("/coverage.cobertura.xml", StringComparison.Ordinal)
+                && !f.Key.Contains("/In/", StringComparison.Ordinal)).ToArray();
         if (reports.Length != 1)
         {
             missing.Add(reports.Length == 0 ? "The coverage report is missing." : "Multiple coverage reports are ambiguous.");
@@ -231,6 +233,7 @@ public static partial class RiskSignalCollector
     [GeneratedRegex(@"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@", RegexOptions.CultureInvariant, 1000)]
     private static partial Regex HunkHeader();
 
-    [GeneratedRegex(@"^\s*(?<path>[^()]+)\((?<position>\d+,\d+(?:,\d+,\d+)?)\): warning (?<code>[A-Za-z]+\d+):", RegexOptions.CultureInvariant, 1000)]
+    // Multi-node MSBuild prefixes log lines with "N>"; the summary repeats them without it.
+    [GeneratedRegex(@"^\s*(?:\d+>)?(?<path>[^()]+)\((?<position>\d+,\d+(?:,\d+,\d+)?)\): warning (?<code>[A-Za-z]+\d+):", RegexOptions.CultureInvariant, 1000)]
     private static partial Regex RoslynWarning();
 }

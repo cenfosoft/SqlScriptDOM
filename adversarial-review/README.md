@@ -451,10 +451,13 @@ dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- 
    or `adversarial-review:human-review`, and for eligible PRs enables GitHub
    auto-merge (merge commit) bound to the evaluated head SHA. Branch protection,
    including the required human approval on `main`, still applies before GitHub merges.
+   A non-eligible result disables auto-merge left over from an earlier eligible run.
 6. Republishes the comment with the label and auto-merge outcomes.
 
 Spend is persisted to the `adversarial-review-ledger` branch after every run,
-including failed runs. A global concurrency group serializes runs so the monthly
+including failed runs. If the ledger branch cannot be read for any reason other
+than not existing yet, the job stops before the review so the monthly budget is never
+bypassed. A global concurrency group serializes runs so the monthly
 budget is enforced against one ledger. If a runner crashes before the push, that
 run's spend record is lost; this is an accepted pilot limitation.
 

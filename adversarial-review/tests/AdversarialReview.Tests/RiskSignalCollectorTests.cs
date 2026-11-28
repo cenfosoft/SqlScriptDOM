@@ -27,7 +27,7 @@ public sealed class RiskSignalCollectorTests
         """;
 
     private const string RoslynLog = """
-        /home/runner/work/SqlScriptDOM/SqlScriptDOM/SqlScriptDom/Parser/A.cs(2,5): warning CA1822: Mark members as static [/x.csproj]
+             1>/home/runner/work/SqlScriptDOM/SqlScriptDOM/SqlScriptDom/Parser/A.cs(2,5): warning CA1822: Mark members as static [/x.csproj]
         /home/runner/work/SqlScriptDOM/SqlScriptDOM/SqlScriptDom/obj/Generated.cs(7,1): warning CS0168: unused [/x.csproj]
           /home/runner/work/SqlScriptDOM/SqlScriptDOM/SqlScriptDom/Parser/A.cs(2,5): warning CA1822: Mark members as static [/x.csproj]
         """;
@@ -40,7 +40,12 @@ public sealed class RiskSignalCollectorTests
     internal static Dictionary<string, byte[]> Evidence(bool coverage = true, bool analysis = true)
     {
         Dictionary<string, byte[]> files = new(StringComparer.Ordinal);
-        if (coverage) files["test-ubuntu/guid/coverage.cobertura.xml"] = Encoding.UTF8.GetBytes(Cobertura);
+        if (coverage)
+        {
+            files["test-ubuntu/guid/coverage.cobertura.xml"] = Encoding.UTF8.GetBytes(Cobertura);
+            // vstest's duplicate deployment copy must not make coverage ambiguous.
+            files["test-ubuntu/runner_host_2026-11-28/In/host/coverage.cobertura.xml"] = Encoding.UTF8.GetBytes(Cobertura);
+        }
         if (analysis)
         {
             files["static-analysis/semgrep.sarif"] = Encoding.UTF8.GetBytes(Sarif);

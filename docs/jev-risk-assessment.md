@@ -127,7 +127,7 @@ remove and reapply the label.
 
 Auto-merge uses GitHub's auto-merge with a merge commit, bound to the evaluated
 head SHA. Branch protection still applies, so GitHub merges only after the required
-human approval and checks. A new commit cancels the binding.
+human approval and checks. A later run that is not eligible disables auto-merge.
 
 Spend is stored in a SQLite ledger committed to the `adversarial-review-ledger`
 branch after every run. Runs are serialized across all PRs. If a runner crashes

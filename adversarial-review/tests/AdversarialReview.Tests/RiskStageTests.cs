@@ -104,8 +104,8 @@ public sealed class RiskStageTests
         Assert.IsFalse(Contracts.Write(review, "audit-report").Contains("\"risk\"", StringComparison.Ordinal));
     }
 
-    private static string Pr(string sha = FoundationTests.Sha, string state = "open") =>
-        $$$"""{"state":"{{{state}}}","draft":false,"node_id":"PR_node","head":{"sha":"{{{sha}}}"}}""";
+    private static string Pr(string sha = FoundationTests.Sha, string state = "open", string autoMerge = "null") =>
+        $$$"""{"state":"{{{state}}}","draft":false,"node_id":"PR_node","auto_merge":{{{autoMerge}}},"head":{"sha":"{{{sha}}}"}}""";
 
     [TestMethod]
     public async Task LabelsReplaceTheOppositeLabelOnlyForTheEvaluatedHead()
@@ -129,12 +129,13 @@ public sealed class RiskStageTests
     public async Task AutoMergeBindsTheHeadAndApprovalRequiresTheNamedEnvironment()
     {
         string graphql = """{"data":{"enablePullRequestAutoMerge":{"pullRequest":{"number":7}}}}""";
+        string autoMerge = "null";
         var handler = new Handler((request, _) => request.RequestUri!.AbsolutePath switch
         {
             "/graphql" => Json(graphql),
             "/repos/owner/repo/actions/runs/9/approvals" =>
                 Json("""[{"state":"approved","environments":[{"name":"adversarial-review"}]},{"state":"rejected","environments":[{"name":"other"}]}]"""),
-            _ => Json(Pr())
+            _ => Json(Pr(autoMerge: autoMerge))
         });
         var actions = new GitHubPullRequestActions(new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }, "token", "owner/repo");
         Assert.AreEqual("enabled", await actions.EnableAutoMergeAsync(7, FoundationTests.Sha, CancellationToken.None));
@@ -145,6 +146,15 @@ public sealed class RiskStageTests
         }
         graphql = """{"errors":[{"message":"Auto merge is not allowed for this repository"}]}""";
         Assert.AreEqual("failed", await actions.EnableAutoMergeAsync(7, FoundationTests.Sha, CancellationToken.None));
+
+        // Not enabled: nothing to disable and no mutation is sent.
+        int requests = handler.Requests.Count;
+        Assert.AreEqual("not-eligible", await actions.DisableAutoMergeAsync(7, FoundationTests.Sha, CancellationToken.None));
+        Assert.AreEqual(requests + 1, handler.Requests.Count);
+        autoMerge = """{"merge_method":"merge"}""";
+        graphql = """{"data":{"disablePullRequestAutoMerge":{"pullRequest":{"number":7}}}}""";
+        Assert.AreEqual("disabled", await actions.DisableAutoMergeAsync(7, FoundationTests.Sha, CancellationToken.None));
+        StringAssert.Contains(handler.Requests[^1].Body, "disablePullRequestAutoMerge");
 
         Assert.IsTrue(await actions.IsEnvironmentApprovedAsync(9, "adversarial-review", CancellationToken.None));
         Assert.IsFalse(await actions.IsEnvironmentApprovedAsync(9, "other", CancellationToken.None));
