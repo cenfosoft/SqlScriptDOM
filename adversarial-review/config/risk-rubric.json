@@ -8,5 +8,7 @@
   "lowFindingsLowMaximum": 2,
   "mediumFindingsMidMaximum": 1,
   "warningsLowMaximum": 1,
-  "warningsMidMaximum": 2
+  "warningsMidMaximum": 2,
+  "jevModel": "jev-1.14.0",
+  "jevTimeoutSeconds": 15
 }

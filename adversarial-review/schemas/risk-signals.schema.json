@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "addedCodeLines", "deletedCodeLines", "coveredAddedLines", "instrumentableAddedLines",
+    "lowFindings", "mediumFindings", "newStaticWarnings", "hasIntegrationTests",
+    "hasUnresolvedHighOrCriticalFinding"
+  ],
+  "properties": {
+    "addedCodeLines": { "type": "integer", "minimum": 0 },
+    "deletedCodeLines": { "type": "integer", "minimum": 0 },
+    "coveredAddedLines": { "type": ["integer", "null"], "minimum": 0 },
+    "instrumentableAddedLines": { "type": ["integer", "null"], "minimum": 0 },
+    "lowFindings": { "type": "integer", "minimum": 0 },
+    "mediumFindings": { "type": "integer", "minimum": 0 },
+    "newStaticWarnings": { "type": "integer", "minimum": 0 },
+    "hasIntegrationTests": { "type": ["boolean", "null"] },
+    "hasUnresolvedHighOrCriticalFinding": { "type": "boolean" }
+  }
+}

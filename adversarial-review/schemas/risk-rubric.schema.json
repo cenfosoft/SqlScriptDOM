@@ -5,7 +5,8 @@
   "required": [
     "schemaVersion", "version", "changedLinesLowMaximum", "changedLinesMidMaximum",
     "coverageLowMinimumPercent", "coverageHighMaximumPercent", "lowFindingsLowMaximum",
-    "mediumFindingsMidMaximum", "warningsLowMaximum", "warningsMidMaximum"
+    "mediumFindingsMidMaximum", "warningsLowMaximum", "warningsMidMaximum",
+    "jevModel", "jevTimeoutSeconds"
   ],
   "properties": {
     "schemaVersion": { "const": "1.0" },
@@ -17,6 +18,8 @@
     "lowFindingsLowMaximum": { "type": "integer", "minimum": 0 },
     "mediumFindingsMidMaximum": { "type": "integer", "minimum": 1 },
     "warningsLowMaximum": { "type": "integer", "minimum": 0 },
-    "warningsMidMaximum": { "type": "integer", "minimum": 1 }
+    "warningsMidMaximum": { "type": "integer", "minimum": 1 },
+    "jevModel": { "type": "string", "pattern": "^jev-[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "jevTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 120 }
   }
 }

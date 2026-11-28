@@ -1,0 +1,82 @@
+name: jev-risk-smoke
+
+# Manual live check of the TypeSafe JEV integration using synthetic categorical
+# signals only. It sends no repository source, paths, or finding text.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jev-risk-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    if: ${{ github.actor == 'allancascante' }}
+    runs-on: ubuntu-latest
+    environment: adversarial-review
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Build CLI
+        shell: pwsh
+        run: |
+          dotnet build adversarial-review/src/AdversarialReview.Cli/AdversarialReview.Cli.csproj -c Debug -f net8.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Record the request payload without sending it
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}/jev-smoke" | Out-Null
+          dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- assess-risk `
+            adversarial-review/config/risk-rubric.json `
+            adversarial-review/tests/fixtures/risk-signals.sample.json `
+            "${{ runner.temp }}/jev-smoke/request.json" --dry-run
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Assess synthetic signals with JEV
+        id: assess
+        shell: pwsh
+        env:
+          JEV_API_KEY: ${{ secrets.JEV_API_KEY }}
+        run: |
+          dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- assess-risk `
+            adversarial-review/config/risk-rubric.json `
+            adversarial-review/tests/fixtures/risk-signals.sample.json `
+            "${{ runner.temp }}/jev-smoke/assessment.json"
+          exit $LASTEXITCODE
+      - name: Summarize assessment
+        if: always()
+        shell: pwsh
+        run: |
+          $path = "${{ runner.temp }}/jev-smoke/assessment.json"
+          if (-not (Test-Path $path)) {
+            "JEV assessment was not produced (outcome: ${{ steps.assess.outcome }}). Merge readiness is not permitted." >> $env:GITHUB_STEP_SUMMARY
+            exit 0
+          }
+          $result = Get-Content $path -Raw | ConvertFrom-Json
+          @(
+            "### JEV risk smoke test (synthetic signals)",
+            "",
+            "| Field | Value |",
+            "|---|---|",
+            "| Status | $($result.assessment.status) |",
+            "| Classification | $($result.assessment.classification) |",
+            "| Confidence | $($result.assessment.confidence) |",
+            "| Answered model | $($result.assessment.answeredModel) |",
+            "| Eligible for low-risk label | $($result.decision.eligibleForLowRiskLabel) |",
+            "",
+            "Labeling and automatic merge remain disabled pending calibration."
+          ) -join "`n" >> $env:GITHUB_STEP_SUMMARY
+      - name: Upload smoke-test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jev-risk-smoke-run${{ github.run_id }}-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/jev-smoke/
+          if-no-files-found: warn

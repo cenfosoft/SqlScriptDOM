@@ -5,7 +5,8 @@ public sealed record RiskRubric(
     int ChangedLinesLowMaximum, int ChangedLinesMidMaximum,
     decimal CoverageLowMinimumPercent, decimal CoverageHighMaximumPercent,
     int LowFindingsLowMaximum, int MediumFindingsMidMaximum,
-    int WarningsLowMaximum, int WarningsMidMaximum)
+    int WarningsLowMaximum, int WarningsMidMaximum,
+    string JevModel, int JevTimeoutSeconds)
 {
     public static RiskRubric Parse(string json)
     {
@@ -57,6 +58,10 @@ public sealed record RiskRubric(
             || LowFindingsLowMaximum < 0 || MediumFindingsMidMaximum < 1
             || WarningsLowMaximum < 0 || WarningsMidMaximum <= WarningsLowMaximum)
             throw new ContractException("Risk rubric boundaries are invalid.");
+        // Pin an explicit model version; aliases such as jev-latest can change silently.
+        if (string.IsNullOrWhiteSpace(JevModel) || !JevModel.StartsWith("jev-", StringComparison.Ordinal)
+            || JevModel is "jev-latest" or "jev-preview" || JevTimeoutSeconds is < 1 or > 120)
+            throw new ContractException("JEV model must be a pinned version with a bounded timeout.");
     }
 }
 

@@ -381,9 +381,33 @@ instrumentable added lines are `not-applicable`. Validate the configuration with
 dotnet run --project adversarial-review/src/AdversarialReview.Cli -- validate-risk-rubric adversarial-review/config/risk-rubric.json
 ```
 
-This local factor classifier does not collect trusted PR evidence, invoke JEV,
-produce an overall risk classification, publish a PR comment, apply labels, or
-authorize a merge. Those integrations and calibration remain pending.
+This local factor classifier does not collect trusted PR evidence, publish a PR
+comment, apply labels, or authorize a merge. Those integrations and calibration
+remain pending.
+
+`JevRiskAssessor` sends the classified factors to the TypeSafe JEV System One
+endpoint (`https://api.typesafe.ai/v1/systemone`) as one `choice` question and
+validates the typed `low`/`mid`/`high` answer, confidence, probabilities, and usage.
+The request contains only categorical factors and the rubric version: no source,
+paths, finding text, or identities. The model is pinned in the rubric
+(`jevModel`); aliases such as `jev-latest` are rejected. Non-success HTTP status,
+timeouts, network errors, and malformed or unexpected responses are recorded as
+`unavailable` or `invalid` without retry and never make a PR eligible. Only an
+assessed `low` result without an unresolved high/critical finding is reported as
+eligible for the low-risk label; labeling itself remains disabled.
+
+Inspect the exact payload without a credential or network request:
+
+```text
+dotnet run --project adversarial-review/src/AdversarialReview.Cli -- assess-risk adversarial-review/config/risk-rubric.json adversarial-review/tests/fixtures/risk-signals.sample.json request.json --dry-run
+```
+
+For a live call, set `JEV_API_KEY` in the environment (never as an argument) and
+omit `--dry-run`. The command exits 3 when the assessment is not `assessed`. The
+manual [`jev-risk-smoke`](../.github/workflows/jev-risk-smoke.yml) workflow runs
+the same synthetic check in the protected `adversarial-review` environment with
+the `JEV_API_KEY` environment secret; `workflow_dispatch` is available only after
+the workflow exists on the default branch.
 
 ### Current operating mode
 

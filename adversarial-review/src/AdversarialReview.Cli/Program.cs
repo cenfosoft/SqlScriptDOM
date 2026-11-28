@@ -146,6 +146,9 @@ internal static class ReviewCommand
                     RiskRubric rubric = RiskRubric.Parse(ReadDocument(path));
                     Console.WriteLine($"Valid risk rubric: {rubric.Version}. JEV execution and merge readiness remain disabled.");
                     return 0;
+                case ["assess-risk", string rubricPath, string signalsPath, string assessmentPath, .. string[] options]
+                    when options is [] or ["--dry-run"]:
+                    return await AssessRiskAsync(rubricPath, signalsPath, assessmentPath, dryRun: options.Length == 1);
                 case ["validate", string schema, string path]:
                     Contracts.Validate(ReadDocument(path), schema);
                     Console.WriteLine($"Valid {schema} document (schema {Contracts.Version}).");
@@ -163,7 +166,7 @@ internal static class ReviewCommand
                     Console.WriteLine("SHA-bound evidence manifest written. Authenticity still requires trusted GitHub metadata verification.");
                     return 0;
                 default:
-                    Console.Error.WriteLine("Usage: prepare-review <config.json> <output-directory> | list-models | validate-config <path> | validate-risk-rubric <path> | validate <schema-name> <path> | render <audit.json> <output.md> | baseline <months> <max-pages> phase1-human-nondraft-merged-only <output.json> <output.md> <owner/repo> <owner/repo> [additional owner/repo ...] | manifest <directory> <check> <platform> <conclusion>");
+                    Console.Error.WriteLine("Usage: prepare-review <config.json> <output-directory> | list-models | validate-config <path> | validate-risk-rubric <path> | assess-risk <rubric.json> <signals.json> <output.json> [--dry-run] | validate <schema-name> <path> | render <audit.json> <output.md> | baseline <months> <max-pages> phase1-human-nondraft-merged-only <output.json> <output.md> <owner/repo> <owner/repo> [additional owner/repo ...] | manifest <directory> <check> <platform> <conclusion>");
                     return 2;
             }
         }
@@ -191,6 +194,34 @@ internal static class ReviewCommand
             Console.Error.WriteLine($"Metadata failed ({exception.GetType().Name}); no input or provider payload is logged.");
             return 1;
         }
+    }
+
+    private static async Task<int> AssessRiskAsync(string rubricPath, string signalsPath, string outputPath, bool dryRun)
+    {
+        RiskRubric rubric = RiskRubric.Parse(ReadDocument(rubricPath));
+        RiskSignals signals = Contracts.Read<RiskSignals>(ReadDocument(signalsPath), "risk-signals");
+        RiskFactors factors = rubric.Classify(signals);
+        if (dryRun)
+        {
+            // Shows exactly what would be sent; no credential is read and no request is made.
+            await WriteNewFileAsync(outputPath, JevRiskAssessor.BuildRequest(rubric, factors));
+            Console.WriteLine("Dry run: JEV request payload written. No credential was read and no request was sent.");
+            return 0;
+        }
+        string? apiKey = Environment.GetEnvironmentVariable("JEV_API_KEY");
+        if (string.IsNullOrWhiteSpace(apiKey))
+            throw new ContractException("Set JEV_API_KEY from a protected secret; never pass keys as CLI arguments.");
+        using var handler = new HttpClientHandler { AllowAutoRedirect = false };
+        using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(rubric.JevTimeoutSeconds + 5) };
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        JevRiskAssessment assessment = await new JevRiskAssessor(http, apiKey).AssessAsync(rubric, factors, cancellation.Token);
+        RiskDecision decision = JevRiskAssessor.Decide(factors, assessment);
+        string json = JsonSerializer.Serialize(new { schemaVersion = "1.0", factors, assessment, decision }, Contracts.JsonOptions);
+        ReportRenderer.RejectCredentialData(json, [apiKey]);
+        await WriteNewFileAsync(outputPath, json);
+        Console.WriteLine($"JEV assessment: {assessment.Status}; classification: {assessment.Classification ?? "none"}; " +
+            $"eligible for low-risk label: {decision.EligibleForLowRiskLabel}. Labeling and merge remain disabled pending calibration.");
+        return assessment.Status == "assessed" ? 0 : 3;
     }
 
     private static async Task RecordPreparationFailureAsync(string[] args)
