@@ -75,7 +75,7 @@ jobs:
           dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- run-review \
             adversarial-review/config/review.json \
             adversarial-review/config/risk-rubric.json \
-            adversarial-review/config/reviewer-prompt.md \
+            .github/prompts/adversarial-review.prompt.md \
             .github/copilot-instructions.md \
             "$RUNNER_TEMP/ledger/spend-ledger.db" \
             "$RUNNER_TEMP/adversarial-review" 2>&1 | tee "$RUNNER_TEMP/adversarial-review/review.log"

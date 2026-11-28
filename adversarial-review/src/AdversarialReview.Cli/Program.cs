@@ -207,7 +207,7 @@ internal static class ReviewCommand
             ?? throw new ContractException($"Required trusted Actions metadata is missing: {key}.");
         ReviewConfiguration config = ReviewConfiguration.Parse(ReadDocument(configPath));
         RiskRubric rubric = RiskRubric.Parse(ReadDocument(rubricPath));
-        string prompt = ReadDocument(promptPath);
+        string prompt = ReviewerPrompt.Load(ReadDocument(promptPath));
         string guidance = ReadDocument(guidancePath);
         LabelSnapshot snapshot = LabelSnapshot.Parse(ReadDocument(Required("GITHUB_EVENT_PATH")),
             Required("GITHUB_EVENT_NAME"), Required("GITHUB_REPOSITORY"), Required("GITHUB_ACTOR"), config);

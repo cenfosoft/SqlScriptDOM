@@ -81,81 +81,96 @@ and 40 output tokens. The smoke workflow has not yet run in Actions.
 
 ## Where configuration lives
 
-| Setting | Location | Status |
-|---|---|---|
-| `adversarial-review` environment, required reviewers | GitHub settings → Environments | Not verified as configured |
-| `JEV_API_KEY` secret | GitHub settings → Environment secrets | Must be added |
-| Copilot SDK credential for the adversarial review | GitHub settings → Environment secrets | Not configured; no paid review runs yet |
-| `adversarial-review:run` label | GitHub repository labels | Used by the preparation workflow |
-| Branch protection and required checks | GitHub settings → Branches | Configured for `main` |
-| Authorized actor, label, rounds, budgets, model pool | [`config/review.json`](../adversarial-review/config/review.json) | Paid execution disabled; limits unset |
-| Risk boundaries, JEV model, timeout | [`config/risk-rubric.json`](../adversarial-review/config/risk-rubric.json) | Initial values |
-| Trigger and job wiring | [`.github/workflows/`](../.github/workflows) | Preparation only; see below |
+| Setting | Location |
+|---|---|
+| `adversarial-review` environment with required reviewers (self-review allowed) | GitHub settings → Environments |
+| `COPILOT_GITHUB_TOKEN` (fine-grained PAT with Copilot Requests) and `JEV_API_KEY` | GitHub settings → Environment secrets |
+| **Allow auto-merge** | GitHub settings → General |
+| Branch protection and required checks for `main` | GitHub settings → Branches |
+| Authorized actor, label, rounds, budgets, billing, model pool | [`config/review.json`](../adversarial-review/config/review.json) |
+| Risk boundaries, JEV model, timeout | [`config/risk-rubric.json`](../adversarial-review/config/risk-rubric.json) |
+| Reviewer prompt | [`.github/prompts/adversarial-review.prompt.md`](../.github/prompts/adversarial-review.prompt.md) |
+| Trigger and job wiring | [`adversarial-review.yml`](../.github/workflows/adversarial-review.yml), [`pr-validation.yml`](../.github/workflows/pr-validation.yml) |
 
-Secrets, environments, reviewers, and labels are configured on the GitHub
-website. Policy values and the workflow logic are versioned in the repository
-so that every change is reviewed.
+Secrets, environments, reviewers, and repository settings are configured on the
+GitHub website. Policy values, prompts, and workflow logic are versioned in the
+repository so every change is reviewed.
 
-## How it connects to the review flow
+The approved budgets are 3 rounds, 60,000 input and 8,000 output tokens, a 120 s
+timeout, 1 retry, USD 1 per authorization, and USD 20 per month. GitHub bills
+Copilot in AI credits at USD 0.01 each and the SDK reports nano-units of a credit,
+so `copilotBilling` uses 1,000,000,000 nano-units per credit; USD 20 is 2,000 credits.
 
-The intended end-to-end flow is:
+## How it runs
 
 ```mermaid
 flowchart TD
-    A[PR opened or updated] --> B[pr-validation: build, tests, Roslyn, Semgrep on Windows and Ubuntu]
+    A[PR opened or updated] --> B[pr-validation on the PR head: build, tests, Roslyn, Semgrep, Ubuntu coverage]
     B -->|any failure| X[Blocked; no tokens spent]
     B -->|all green| C[allancascante applies adversarial-review:run]
-    C --> D[Protected environment approval]
-    D --> E[Trusted workflow verifies the label actor, current SHA, and green checks]
-    E --> F[Adversarial review rounds with the Copilot SDK]
+    C --> D[Approve the adversarial-review environment]
+    D --> E[Verify label event, current SHA, workflow parity, and CI evidence]
+    E --> F[Up to 3 Copilot review rounds within budget]
     F --> G[Collect risk signals for the same SHA]
+    G -->|inputs missing| J[adversarial-review:human-review]
     G --> H[JEV risk assessment]
-    H -->|assessed low, no blockers| I[Eligible: low-risk label after calibration]
-    H -->|mid, high, unavailable, invalid, or blocked| J[Human review label]
-    I --> K[Publish one audit comment and JSON artifact]
+    H -->|low, complete audit, no high finding| I[adversarial-review:low-risk and auto-merge]
+    H -->|mid, high, unavailable, invalid, or blocked| J
+    I --> K[Audit comment and JSON artifact]
     J --> K
 ```
 
-The trigger you described is how the existing
-[preparation workflow](../.github/workflows/adversarial-review-prepare.yml) already
-starts: the `adversarial-review:run` label, applied by `allancascante`, on a
-non-draft PR targeting `main`, in the protected environment. It verifies that the
-newest validation run for the current SHA is complete and green, and fails if it
-is not, so apply the label **after** the checks finish. Today that workflow stops
-after preparation: it does not run the adversarial review or call JEV.
+Apply the label **after** the checks finish. The trusted
+[workflow](../.github/workflows/adversarial-review.yml) fails if the newest
+validation run for the head is incomplete or failed. To review a new commit,
+remove and reapply the label.
 
-### Implementation status
+Auto-merge uses GitHub's auto-merge with a merge commit, bound to the evaluated
+head SHA. Branch protection still applies, so GitHub merges only after the required
+human approval and checks. A new commit cancels the binding.
 
-| Step | Status |
+Spend is stored in a SQLite ledger committed to the `adversarial-review-ledger`
+branch after every run. Runs are serialized across all PRs. If a runner crashes
+before the push, that run's spend record is lost; this is accepted for the pilot.
+
+## How the signals are collected
+
+Every signal comes from the evaluated head SHA. The trusted workflow never runs PR
+code: values produced by running the code come from `pr-validation` artifacts,
+which are verified against their SHA-bound manifests before use.
+
+| Signal | Source |
 |---|---|
-| Label trigger, actor check, environment, SHA-bound check verification | Implemented (preparation only) |
-| Adversarial review rounds, budgets, ledger | Implemented and tested; not wired into a workflow |
-| Persistent host for the spend ledger | Not deployed |
-| Collection of real risk signals | Not implemented; see below |
-| JEV client and decision rules | Implemented and tested |
-| Audit comment publication | Implemented and tested; not wired into a workflow |
-| Labels | Not implemented; disabled pending calibration |
+| Changed code lines | GitHub PR files API: additions plus deletions, excluding `*.md`, `docs/`, `release-notes/`, `Test/SqlDom/TestScripts/`, and `Test/SqlDom/Baselines*/` |
+| Added-line coverage | Cobertura report from the Ubuntu parser test run, matched against the added lines in each file's patch |
+| Adversarial findings | Unresolved low and medium findings from the review; high or critical findings set the separate blocker |
+| New static-analysis warnings | Semgrep SARIF results and distinct Roslyn warnings in files the PR changed |
+| Integration tests | Present when the PR adds or changes a parser round-trip script under `Test/SqlDom/TestScripts/` together with a baseline of the same name |
 
-### Collecting the real signals
+If coverage, analysis reports, the review rounds, or a needed patch are missing,
+JEV is not called and the PR receives the human-review label.
 
-Each signal must come from the same head SHA as the review and from evidence the
-trusted workflow can verify. The trusted workflow must not run PR code, so values
-produced by running the code are created by the untrusted validation workflow,
-uploaded as artifacts with the existing SHA-bound manifest, and verified before use.
+### Known limitations
 
-| Signal | Source | Work needed |
-|---|---|---|
-| Changed code lines | GitHub PR files API (`additions`, `deletions`) | Decide which files count as code, for example excluding docs and test baselines |
-| Added-line coverage | Coverage report from the test run, intersected with the PR diff | Add coverage collection to `pr-validation`, compute covered/instrumentable added lines, and upload with the manifest |
-| Adversarial findings | The review cycle's `audit.json` | Count low and medium findings and detect unresolved high/critical findings |
-| New static-analysis warnings | Semgrep SARIF and Roslyn output from `static-analysis` | Compare against the base branch to count only new warnings |
-| Integration tests | Test results | Define which tests count as integration tests; until then, send `unknown` |
+- Coverage comes only from the parser suite (`UTSqlScriptDom`). Changes limited to
+  `adversarial-review/` have no instrumented lines, so coverage is `not-applicable`.
+- Coverage excludes generated parser sources under `obj/`. If the report exceeds
+  20 MiB it is dropped and the PR goes to human review.
+- The validation workflow now tests the PR head commit instead of GitHub's merge
+  result, so evidence and line numbers match the audited SHA.
+- Grammar files are large; their review context can exceed the token budget, which
+  ends the review as `budget-exceeded` and sends the PR to human review.
 
-### Open decisions
+### Future investigation: new warnings against the base commit
 
-- Which files count as code lines.
-- How to identify integration tests.
-- Whether the flow should start automatically when checks complete while the
-  label is present, or keep the current label-after-checks behavior.
-- Host for the persistent spend ledger, Copilot credential, and budgets.
-- Label names, calibration acceptance, and whether automatic merge is ever enabled.
+"New static-analysis warnings" is currently approximated as warnings reported in
+files the PR changed on the head commit. A warning that already existed in a
+changed file is counted, and a new warning caused in an unchanged file is not.
+A precise count would run Roslyn and Semgrep on the base commit too and subtract
+its results, at the cost of roughly doubling the static-analysis job. This was
+deferred and should be revisited with real pilot data.
+
+## Open decisions
+
+- Calibration acceptance after pilot runs, and any rubric adjustments.
+- Whether to keep the required human approval for low-risk PRs before auto-merge.

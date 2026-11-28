@@ -118,6 +118,10 @@ versioned configuration and documented. The model and rubric must be evaluated
 through calibration. Until calibration is approved, the workflow MUST operate in
 report-only mode and MUST NOT authorize automatic merging.
 
+On November 27, 2026, the repository owner approved the initial rubric as the pilot
+calibration and approved labeling and GitHub auto-merge for eligible pull requests.
+Pilot results MUST be reviewed to confirm or adjust the rubric.
+
 ### 4.4 Orchestrator
 
 GitHub Actions coordinates tools and agents through separate untrusted validation and trusted reporting workflows. The untrusted workflow may execute contributor code but MUST NOT receive protected credentials. The trusted workflow may access provider credentials and update the audit comment but MUST NOT execute code from the contributor branch.
@@ -198,6 +202,11 @@ After calibration, a pull request can be marked merge-ready only when:
 - The workflow evaluated the current pull request head SHA.
 
 Any stale, canceled, timed-out, or partially completed evaluation MUST fail closed and require rerun or human review.
+
+Under the approved pilot policy, an eligible pull request receives the
+`adversarial-review:low-risk` label and GitHub auto-merge is enabled for the
+evaluated head SHA; every other outcome receives `adversarial-review:human-review`.
+Auto-merge does not bypass branch protection, including required human approvals.
 
 ## 6. Risk Model and Decision Record
 
@@ -408,7 +417,7 @@ The following decisions must be resolved and recorded before production gating:
 - Coverage baseline and regression tolerance.
 - Human override roles and escalation service-level objective.
 - Retention period for audit artifacts.
-- Whether and when agent-authored corrections or automatic merge are permitted.
+- Whether and when agent-authored corrections are permitted.
 
 ## 14. Traceability
 

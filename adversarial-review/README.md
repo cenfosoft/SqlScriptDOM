@@ -1,6 +1,7 @@
 # Adversarial Review Foundation
 
-This is separate .NET 8 tooling for the [Phase 1 report-only plan](../docs/phase-1-progress.md).
+This is separate .NET 8 tooling for the [Phase 1 plan](../docs/phase-1-progress.md), extended with the
+JEV risk assessment, labels, and auto-merge described in the [JEV how-to](../docs/jev-risk-assessment.md).
 It does not reference, ship with, or change the ScriptDom parser package.
 Use the repository SDK selected by [global.json](../global.json).
 
@@ -15,11 +16,11 @@ dotnet run --project adversarial-review/src/AdversarialReview.Cli -- validate fi
 dotnet run --project adversarial-review/src/AdversarialReview.Cli -- render audit.json report.md
 ```
 
-The shipped [configuration](config/review.json) is intentionally disabled, lists three
-model candidates discovered through the approved Copilot SDK,
-and leaves unapproved limits unset. Configuration validation can succeed while execution
-blockers remain: structural validity is not authorization to spend. A provider adapter
-is implemented, but there is no paid execution command or secret-bearing workflow. The
+The shipped [configuration](config/review.json) enables paid review with the approved
+limits and lists three model candidates discovered through the approved Copilot SDK.
+Structural validity is not authorization to spend: each run still requires the label,
+environment approval, and current-SHA admission. The trusted `run-review` command and
+[`adversarial-review`](../.github/workflows/adversarial-review.yml) workflow execute it. The
 [official GitHub Models documentation](https://docs.github.com/en/github-models)
 states that GitHub Models was retired on July 30, 2026. Its former inference API
 is not an available activation target. GitHub Copilot SDK is a separate, explicitly
@@ -84,8 +85,9 @@ The adapter requests prompt/output limits through the SDK capability override an
 session AI-credit ceiling. These SDK controls are **not verified hard per-request
 financial caps**; admission-time limits can overshoot on an in-flight call and cannot
 prove cancellation stopped billing. Capability overrides and session limits are
-experimental SDK surfaces, isolated behind a pinned version. Paid activation remains
-blocked pending approved limits and verified provider-side enforcement.
+experimental SDK surfaces, isolated behind a pinned version. Paid review is enabled
+with approved limits; provider-side enforcement is still not verified, so the ledger
+reservation and best-effort SDK ceilings are the controls.
 
 There is deliberately **no default currency conversion**: the trusted host must supply
 an explicit verified `CopilotBillingConversion`. Complete `assistant.usage` records
@@ -114,9 +116,9 @@ reservation expiry. An unresolved critical/high finding stops additional calls a
 renders the report status as **Human Review Required**; an attempted but incomplete
 review also escalates. SQLite records the separate `human-review-required` final
 status. The report schema remains at version 1.0 and its round outcome enum includes
-`budget-exceeded`. The advisory status does not apply a GitHub label or change the
-PR's open/closed state. Numeric risk scoring remains disabled; no score threshold is
-inferred.
+`budget-exceeded`. The review cycle itself does not apply labels; the risk stage in
+`run-review` applies the risk label and enables auto-merge. Numeric risk scoring is
+replaced by the categorical JEV assessment.
 
 Before any inference, SQLite atomically consumes the authorization and reserves the
 cycle's full financial maximum against the repository's monthly balance. When a
@@ -344,10 +346,10 @@ later human dispositions remain necessary.
 
 These components are offline building blocks. The bounded engine and SQLite ledger
 can be exercised with fake providers. The SDK adapter is implemented and metadata
-discovery is verified locally; no paid execution, deployed ledger, or trusted reporting
-workflow is enabled.
+discovery is verified locally. The trusted workflow composes them with the ledger
+persisted on the `adversarial-review-ledger` branch.
 
-## PR comment client (persistent-host integration; not deployed)
+## PR comment client
 
 `GitHubAuditPublisher` and its persistent-host integration are tested against synthetic HTTP handlers only. It supports
 one `github-actions[bot]` comment with a stable marker and head/run/attempt metadata,
@@ -365,9 +367,8 @@ cancellation token. The client uses only GitHub API PR reads and issue-comment
 reads/writes, logs neither tokens nor response bodies, and performs no model calls,
 approvals, source writes, or merges. HTTP/permission/schema/pagination errors remain
 explicit; the eventual host must retain the audit artifact and expose failed
-publication without rerunning inference. There is deliberately no CLI `publish`
-command or secret-bearing workflow until authorization, budgets, and environment
-protection are implemented and approved.
+publication without rerunning inference. `run-review` publishes through this client
+under the workflow's global concurrency group.
 
 ## Operator runbook and activation prerequisites
 
@@ -381,9 +382,8 @@ instrumentable added lines are `not-applicable`. Validate the configuration with
 dotnet run --project adversarial-review/src/AdversarialReview.Cli -- validate-risk-rubric adversarial-review/config/risk-rubric.json
 ```
 
-This local factor classifier does not collect trusted PR evidence, publish a PR
-comment, apply labels, or authorize a merge. Those integrations and calibration
-remain pending.
+`RiskSignalCollector` derives the factor inputs for the admitted head SHA, and
+`RiskStage` sends them to JEV and records the decision in the audit report.
 
 `JevRiskAssessor` sends the classified factors to the TypeSafe JEV System One
 endpoint (`https://api.typesafe.ai/v1/systemone`) as one `choice` question and
@@ -393,8 +393,8 @@ paths, finding text, or identities. The model is pinned in the rubric
 (`jevModel`); aliases such as `jev-latest` are rejected. Non-success HTTP status,
 timeouts, network errors, and malformed or unexpected responses are recorded as
 `unavailable` or `invalid` without retry and never make a PR eligible. Only an
-assessed `low` result without an unresolved high/critical finding is reported as
-eligible for the low-risk label; labeling itself remains disabled.
+assessed `low` result for a complete audit without an unresolved high/critical
+finding is eligible for the low-risk label and auto-merge.
 
 Inspect the exact payload without a credential or network request:
 
@@ -413,100 +413,71 @@ and how the assessment connects to the review flow.
 
 ### Current operating mode
 
-- Deterministic validation and a trusted **preparation-only** workflow are defined.
-  Both have read-only repository permissions and receive no model credential.
-- No event, label, comment, workflow rerun, or configuration edit can invoke a model
-  through the current CLI: it has no model-execution command.
-- Applying `adversarial-review:run` by `allancascante` prepares evidence only after
-  the workflow is installed on the default branch; it does **not** start paid review.
-- Existing CI remains authoritative. Offline tool tests, rendered reports, and
-  synthetic successful checks are not evidence that a real PR passed validation.
+- [`config/review.json`](config/review.json) enables paid review with the approved
+  limits: 3 rounds, 60,000 input and 8,000 output tokens per authorization, a 120 s
+  timeout, 1 retry, USD 1 per authorization, and USD 20 per month.
+- `copilotBilling` converts SDK usage to dollars. GitHub bills Copilot in AI credits
+  at USD 0.01 each; the SDK reports nano-units of a credit, so 1,000,000,000 nano-units
+  equal one credit. The monthly budget therefore equals 2,000 credits.
+- The label `adversarial-review:run`, applied by `allancascante` after CI completes,
+  starts the trusted [`adversarial-review`](../.github/workflows/adversarial-review.yml)
+  workflow on a non-draft PR that targets the default branch.
+- Existing CI remains authoritative. A failed build, test, or required static analysis
+  blocks before any model call.
 
-### Before implementing or enabling trusted execution
+### Trusted review workflow
 
-1. Confirm repository-supported GitHub model access, exact model identifiers,
-   authentication/permissions, and provider retention terms. Personal chat access
-   or the local GitHub CLI token is not evidence of Actions model entitlement.
-2. Approve round, token, timeout, retry, per-authorization USD, and monthly USD
-   limits. Configure provider-side limits as defense in depth; do not assume an
-   application estimate is an enforceable billing cap.
-3. Provision and verify a shared persistent host/store for atomic authorization and
-   monthly spend reservations. The SQLite ledger is locally tested; deployment must
-   preserve its single-store guarantees across crashes, concurrent PRs, uncertain
-   billing, and workflow attempts before any inference request can be made.
-4. Create the protected reporting environment with the approved reviewer identity
-   and restrict workflow execution to trusted default-branch code. Do not grant
-   an untrusted validation job environment access.
-5. Supply the team-owned Semgrep rules and Roslyn analyzer policy, pin tooling,
-   and verify successful evidence for both authoritative OS matrices.
-6. Approve artifact/metrics retention and raw-data access, model-context selection,
-   and reporting redaction. Keep raw prompts and credentials out of artifacts.
-7. Deploy the implemented admission/evidence/host components to the chosen persistent
-   executor. Wire its authenticated webhook head snapshot, verified protected-environment
-   approval, Copilot credential/billing policy, and bot publication credential. The
-   preparation workflow intentionally does not perform that handoff. Require fresh
-   head/state checks after approval and before every round.
-8. Run fork and same-repository pilot scenarios using approved limits and obtain
-   team acceptance. Calibrate numeric risk before introducing numeric reporting;
-   automatic correction/merge remains outside Phase 1.
-
-### Failures and reruns
-
-The [preparation workflow](../.github/workflows/adversarial-review-prepare.yml) is
-triggered only by the authorized label on PRs targeting the default branch. It checks
-out the base workflow's immutable `github.sha`, never the PR head or merge ref.
-It names the `adversarial-review` environment but receives only a read-only Actions
-token. Environment protection must be configured manually; naming an environment does
-not establish approval. If GitHub creates an unprotected environment, this workflow
-still cannot invoke inference or spend tokens.
-
-Its command is:
+The workflow runs default-branch code in the protected `adversarial-review`
+environment and reads the PR only through the GitHub API; it never checks out or
+executes PR code. It runs:
 
 ```text
-dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- prepare-review adversarial-review/config/review.json <output-directory>
+dotnet run --no-build --project adversarial-review/src/AdversarialReview.Cli -- run-review adversarial-review/config/review.json adversarial-review/config/risk-rubric.json .github/prompts/adversarial-review.prompt.md .github/copilot-instructions.md <ledger.db> <output-directory>
 ```
 
-It reads `GITHUB_EVENT_PATH`, `GITHUB_EVENT_NAME`, `GITHUB_REPOSITORY`, `GITHUB_ACTOR`,
-`GITHUB_SHA`, `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT`, and read-only `GH_TOKEN` from the
-trusted Actions runtime. It validates a labeled snapshot against the allowlist and
-default branch, correlates label/update time conservatively, selects the newest
-head-matching validation run, and performs admission/evidence verification.
-No Copilot client, source context, spend database, or comment publisher is created.
-It remains preparation-only even if someone enables the JSON configuration.
-It does not turn label history or its generated artifact into reusable funding authority.
-Apply the label **after CI completes**; if correlation is ambiguous, the head changes,
-or the newest run is incomplete/failed, it fails instead of using an older run.
-Remove/reapply the label to request preparation for a new head; a workflow rerun
-retains the original webhook snapshot and cannot authorize a different head.
+`run-review` reads `GITHUB_EVENT_PATH`, `GITHUB_EVENT_NAME`, `GITHUB_REPOSITORY`,
+`GITHUB_ACTOR`, `GITHUB_SHA`, `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT`, `GH_TOKEN`,
+`COPILOT_GITHUB_TOKEN`, and the optional `JEV_API_KEY`. It then:
 
-Successful preparation writes schema-valid `audit.json` and escaped `report.md`,
-explicitly marked incomplete/stale with no model rounds and no numeric risk score.
-Missing analyzers remain blockers. Expected command failures exit nonzero and write
-a constant-content `failure.json` without source, tokens, exception text, or provider
-payloads, validated by [its versioned schema](schemas/preparation-failure.schema.json).
-Output files are create-new only. The workflow also stores build/preparation logs and
-a SHA-256 manifest that records the repository, PR, head SHA, workflow run ID, attempt,
-and hashes of available files. GitHub runner labels `ubuntu-latest` and `windows-latest`
-are normalized to the schema's canonical platform values `ubuntu` and `windows`;
-unknown labels remain invalid. Validation and static-analysis artifacts use the same
-identity fields; reruns have distinct artifact names and never replace evidence from an
-earlier attempt. The manifest is an integrity checksum, not an authenticity proof;
-trusted admission must still verify identity against GitHub metadata. The workflow
-uploads available reports with `always()`; build/setup failures are still visible as
-failed jobs and may produce no report. Actual Actions/fork runs and environment
-approval behavior remain unverified.
-There is no automatically posted comment and no paid execution step in this workflow.
-Disable this preparation workflow separately if metadata preparation itself must stop;
-`enabled: false` controls paid execution, not this read-only diagnostic path.
+1. Correlates the label webhook with its label event and the newest
+   `pr-validation` run for the head, and verifies admission.
+2. Requires a recorded approval of the `adversarial-review` environment for the
+   current run; without it the audit is blocked and no model is called.
+3. Verifies the CI evidence for the head and runs up to three Copilot review rounds
+   with the [trusted reviewer prompt](../.github/prompts/adversarial-review.prompt.md), reserving spend in
+   the SQLite ledger first.
+4. Collects risk signals and calls JEV. Missing inputs skip JEV.
+5. Publishes or updates one audit comment, applies `adversarial-review:low-risk`
+   or `adversarial-review:human-review`, and for eligible PRs enables GitHub
+   auto-merge (merge commit) bound to the evaluated head SHA. Branch protection,
+   including the required human approval on `main`, still applies before GitHub merges.
+6. Republishes the comment with the label and auto-merge outcomes.
 
-HU-03 operational acceptance is still blocked: the repository's environments API
-currently reports no configured environments, so no required approver can be named or
-verified. The requested required reviewers for `adversarial-review` are
-`rvillarrealf` and `allancascante`; repository settings must still be configured and
-verified. The authorized label actor is not implicitly an environment approver. The
-feature branch now has Actions validation runs, but they do not prove the protected
-approval-wait behavior. Local tests do not replace the required approval-wait run,
-same-repository/fork pilots, or screenshots showing run links, SHA, and jobs.
+Spend is persisted to the `adversarial-review-ledger` branch after every run,
+including failed runs. A global concurrency group serializes runs so the monthly
+budget is enforced against one ledger. If a runner crashes before the push, that
+run's spend record is lost; this is an accepted pilot limitation.
+
+The PR validation workflow must be identical on the default branch and the PR head;
+otherwise admission requires human handling. Apply the label **after CI completes**;
+if correlation is ambiguous, the head changes, or the newest run is incomplete or
+failed, the review fails instead of using an older run. Remove and reapply the label
+for a new head; a rerun keeps the original webhook snapshot.
+
+Successful runs write `audit.json` and `report.md`. Expected failures write a
+constant-content `failure.json` without source, tokens, or provider payloads. The
+uploaded artifact includes logs and a SHA-256 manifest. The manifest is an integrity
+checksum, not an authenticity proof.
+
+### Required GitHub settings
+
+- Environment `adversarial-review` with required reviewers; allow self-review when
+  the label actor also approves the run.
+- Environment secrets `COPILOT_GITHUB_TOKEN` (fine-grained PAT with Copilot Requests
+  permission) and `JEV_API_KEY`.
+- Repository setting **Allow auto-merge**.
+
+### Failures and reruns
 
 - A structural validation failure exits nonzero without echoing document contents.
   Fix the input rather than relaxing schema enforcement.
@@ -514,22 +485,18 @@ same-repository/fork pilots, or screenshots showing run links, SHA, and jobs.
   window/page allowance deliberately; do not relabel partial results as complete.
 - Missing/failed evidence or manifest generation must stay failed/incomplete.
   Inspect raw artifacts and the actual Actions run. Never fabricate analyzer passes.
-- Retry only the offline command or publication step that failed. Publication
-  retries must not repeat model inference. A new head always needs new authorization.
-- There is no live inference retry mechanism yet. Future retries must be bounded,
-  reserved, auditable, and safe when a timed-out request may already have been billed.
+- Publication retries must not repeat model inference. A new head always needs new
+  authorization. There is no automatic inference retry.
 
 ### Disable and incident handling
 
-Keep `enabled: false` as the default. The eventual trusted host must enforce it
-before accessing providers, but the flag is not a provider-side billing control.
-For an incident after deployment, disable the trusted workflow, cancel queued/running
-review jobs, revoke or rotate provider credentials, block environment approvals, and
+Set `enabled: false` in `config/review.json` to stop paid review; the flag is not a
+provider-side billing control. For an incident, disable the `adversarial-review`
+workflow, cancel queued or running review jobs, revoke or rotate the Copilot and JEV
+credentials, block environment approvals, disable auto-merge on affected PRs, and
 review provider usage before restoring access. Do not disable authoritative parser CI
-to disable advisory review. Preserve sanitized incident evidence under the approved
-retention policy; delete exposed secrets from comments/artifacts using repository
-administration tools. No repository environment or remote configuration has been
-created by this implementation.
+to disable advisory review. Delete exposed secrets from comments and artifacts using
+repository administration tools.
 
 ## Bounded review-cycle engine
 

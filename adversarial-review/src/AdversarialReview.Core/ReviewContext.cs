@@ -76,3 +76,21 @@ public static class ReviewerOutput
         return findings;
     }
 }
+
+public static class ReviewerPrompt
+{
+    // Prompt files carry YAML front matter for editors; only the body is sent as the system message.
+    public static string Load(string text)
+    {
+        string normalized = text.Replace("\r\n", "\n", StringComparison.Ordinal);
+        if (normalized.StartsWith("---\n", StringComparison.Ordinal))
+        {
+            int end = normalized.IndexOf("\n---\n", 4, StringComparison.Ordinal);
+            if (end < 0) throw new ContractException("Reviewer prompt front matter is not terminated.");
+            normalized = normalized[(end + 5)..];
+        }
+        normalized = normalized.Trim();
+        if (normalized.Length == 0) throw new ContractException("Reviewer prompt is empty.");
+        return normalized;
+    }
+}
