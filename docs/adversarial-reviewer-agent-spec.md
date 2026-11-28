@@ -44,8 +44,8 @@ This project adds review automation around the development process. It does not 
 - **Deterministic signal:** A result from a repeatable tool, such as a test, linter, coverage tool, or static analyzer.
 - **Finding:** A discrete issue reported by a tool or agent, with evidence and severity.
 - **Review cycle:** One adversarial review, risk evaluation, and optional correction attempt.
-- **Risk score:** A normalized metric used to support the workflow decision.
-- **Audit trail:** The evidence, findings, score calculation, and final decision published for a pull request.
+- **Risk classification:** A `low`, `mid`, or `high` assessment used to support the workflow decision.
+- **Audit trail:** The evidence, findings, risk assessment, and final decision published for a pull request.
 - **Escalation:** Routing a pull request to human maintainers because automation cannot safely clear it.
 
 The words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** describe requirement strength.
@@ -93,9 +93,12 @@ automatic model-selection aliases MUST NOT replace explicit rotation. Catalog di
 MUST NOT send inference prompts and MUST NOT be treated as proof of deployment
 entitlement or approved spending limits.
 
-### 4.3 Risk Scoring Engine
+### 4.3 Risk Assessment Engine
 
-The engine MUST combine deterministic signals and adversarial findings into a normalized score. It MUST NOT allow an LLM to silently override failed mandatory checks.
+The risk assessment engine MUST use TypeSafe JEV to assess risk from
+permitted risk signals and adversarial findings. Deterministic orchestration MUST
+apply mandatory blocking rules independently of the assessment; JEV MUST NOT override
+them or make the final merge-readiness decision.
 
 The initial risk model will use the following inputs:
 
@@ -103,13 +106,17 @@ The initial risk model will use the following inputs:
 |---|---|---|
 | Build | .NET build | A failure is a blocking condition. |
 | Tests | Focused and full test suites | A required test failure is a blocking condition. |
-| Static analysis | Semgrep | Findings contribute by severity; critical findings block clearance. |
+| Static analysis | Semgrep and Roslyn | Failed required analysis and critical findings block clearance; new warnings contribute to risk. |
 | Lint/format checks | Repository tooling | Failures contribute to risk according to severity. |
-| Coverage | Coverage report | Regressions contribute to risk after a baseline is established. |
+| Coverage | Coverage report | Coverage of added executable lines contributes to risk; coverage below 100% alone does not block clearance. If there are no added executable lines, coverage is not applicable. |
 | Adversarial findings | Reviewer output | Findings contribute using severity and confidence. |
-| Change scope | Pull request diff | High-impact grammar or workflow changes increase review scrutiny. |
+| Change scope | Pull request metadata | Change size and high-impact grammar or workflow changes increase review scrutiny. |
+| Integration tests | Test evidence | Available integration-test evidence contributes to the assessment. |
 
-The exact weights and acceptance threshold are configuration values and remain to be calibrated. Until calibration is approved, the workflow MUST operate in report-only mode and MUST NOT authorize automatic merging.
+The risk rubric, factor boundaries, and acceptable classifications MUST be
+versioned configuration and documented. The model and rubric must be evaluated
+through calibration. Until calibration is approved, the workflow MUST operate in
+report-only mode and MUST NOT authorize automatic merging.
 
 ### 4.4 Orchestrator
 
@@ -120,7 +127,7 @@ The orchestration implementation MUST use .NET/C#. The orchestrator MUST:
 1. Collect pull request metadata and the bounded diff.
 2. Run deterministic checks before invoking the LLM review.
 3. Normalize tool output into a common finding format.
-4. Run the adversarial review and risk calculation.
+4. Run the adversarial review and obtain a risk classification from JEV.
 5. Decide whether to clear, repeat, or escalate the review.
 6. Publish or update one audit comment on the pull request.
 7. Upload machine-readable reports as workflow artifacts.
@@ -172,7 +179,7 @@ The orchestrator MUST enforce all of the following limits:
 
 A cycle can end in one of three states:
 
-- **Clear:** Mandatory checks pass and risk is at or below the acceptance threshold.
+- **Clear:** Mandatory checks pass and the risk classification is acceptable.
 - **Repeat:** Correctable findings remain and the cycle limit has not been reached.
 - **Escalate:** A blocking condition exists, limits are exhausted, output is inconclusive, or policy requires a human decision.
 
@@ -186,7 +193,7 @@ After calibration, a pull request can be marked merge-ready only when:
 
 - All mandatory deterministic checks pass.
 - No unresolved blocking finding exists.
-- The risk score is at or below the approved threshold.
+- The risk classification is `low` under the initial policy.
 - The audit trail is successfully published.
 - The workflow evaluated the current pull request head SHA.
 
@@ -194,24 +201,44 @@ Any stale, canceled, timed-out, or partially completed evaluation MUST fail clos
 
 ## 6. Risk Model and Decision Record
 
-### 6.1 Score Contract
+### 6.1 Risk Classification Contract
 
-The risk score MUST be represented on a scale from `0` to `100`, where `0` is lowest risk and `100` is highest risk. A score alone is insufficient: blocking conditions always take precedence.
+The overall risk classification MUST be `low`, `mid`, or `high`. The initial
+policy permits merge readiness only for `low`; a classification alone is
+insufficient because blocking conditions always take precedence.
 
-A future calibrated model may use a weighted formula such as:
+The following initial factor classifications MUST be configurable and documented:
 
-$$
-R = \min\left(100, \sum_i w_i s_i c_i + p\right)
-$$
+| Factor | Low | Mid | High |
+|---|---|---|---|
+| Changed code lines | 0–100 | 101–1,000 | 1,001 or more |
+| Coverage of added executable lines | 100% | Greater than 80% and less than 100% | 80% or less |
+| Adversarial findings | 0–2 low findings and no mid findings | 3 or more low findings or 1 mid finding | 2 or more mid findings |
+| New static-analysis warnings | 0–1 | 2 | 3 or more |
 
-where:
+Changed code lines are the sum of added and deleted code lines in the diff.
+Coverage is the percentage of added executable lines covered by tests. If no
+added executable lines exist, coverage is not applicable; unknown or missing
+coverage is not a pass and requires escalation.
 
-- $w_i$ is the approved weight for a finding category.
-- $s_i$ is the severity value.
-- $c_i$ is the confidence value.
-- $p$ is the penalty from failed or missing deterministic signals.
+For adversarial findings, the highest applicable factor classification takes
+precedence when low and mid counts overlap. High and critical findings are
+provided separately to the assessment; unresolved findings of either severity
+block clearance independently of the overall risk classification. A blocking
+finding does not itself prevent a JEV assessment when all requirements for the
+provider call are otherwise satisfied.
 
-Weights, severity mappings, confidence handling, and thresholds MUST be versioned configuration. A change to the model MUST be visible in the audit trail.
+JEV MUST combine the factors using the configured rubric and its assessment,
+not simply select the highest factor. Available integration-test evidence is
+additional context for that assessment. The orchestrator MUST validate the
+structured response; a missing, unavailable, malformed, or unsupported
+classification MUST NOT be replaced with a default and MUST NOT authorize
+clearance. Required checks MUST pass and the adversarial review MUST run before
+JEV is called.
+
+The audit trail MUST identify the model, rubric, input factors, and validated
+assessment so the final decision can be reconstructed without assuming repeated
+model calls yield identical classifications.
 
 ### 6.2 Blocking Conditions
 
@@ -220,8 +247,10 @@ At minimum, these conditions MUST block automated clearance:
 - Build failure.
 - Required test failure.
 - Critical static-analysis finding.
+- Unresolved high or critical adversarial finding.
 - Detected secret exposure.
 - Missing or invalid reviewer output after retries.
+- Missing, unavailable, malformed, or invalid JEV risk assessment.
 - Review cycle, time, token, or cost limit exhaustion.
 - Evaluation of a commit other than the current pull request head.
 - Failure to publish the audit trail.
@@ -231,8 +260,8 @@ At minimum, these conditions MUST block automated clearance:
 The pull request comment MUST contain:
 
 - Evaluated commit SHA and workflow run link.
-- Final state and risk score.
-- Risk model version and configured threshold.
+- Final state and risk classification.
+- Risk model and rubric version, acceptable classifications, factor classifications, and JEV assessment.
 - Summary of deterministic checks.
 - Findings grouped by severity and category.
 - Review cycle count and limit.
@@ -257,7 +286,11 @@ The review prompt MUST prioritize correctness over agreement with the author. It
 
 ### 7.3 Risk Generation Prompt
 
-If an LLM contributes to risk classification, it MUST emit structured findings rather than the final gate decision. Deterministic orchestration code MUST calculate the final score and apply blocking rules.
+JEV MUST emit a structured risk classification rather than a merge decision. The
+orchestrator MUST validate the assessment and apply blocking rules
+deterministically. Risk inputs sent to JEV MUST exclude source code, credentials,
+and other sensitive data; permitted fields and their handling MUST be defined
+before the integration is enabled.
 
 ### 7.4 Security Guardrails
 
@@ -276,7 +309,7 @@ If an LLM contributes to risk classification, it MUST emit structured findings r
 
 ### 8.1 False Positives
 
-The team MUST create a calibration set containing accepted changes, known regressions, and intentionally ambiguous cases. Prompt and scoring changes SHOULD be evaluated against this set before deployment.
+The team MUST create a calibration set containing accepted changes, known regressions, and intentionally ambiguous cases. Prompt and risk assessment changes SHOULD be evaluated against this set before deployment.
 
 The system MUST record reviewer dispositions so false-positive rates can be measured. Contributors MUST have a documented path to request human review.
 
@@ -328,7 +361,7 @@ Metrics MUST avoid exposing secrets or sensitive prompt content.
 ### Phase 2: Risk Calibration and Required Check
 
 - Build and evaluate the calibration set.
-- Approve versioned risk weights and thresholds.
+- Approve the versioned risk rubric and acceptable classifications.
 - Enable a required status check that escalates high-risk changes.
 - Document human override and incident procedures.
 
@@ -352,7 +385,8 @@ The initial implementation is complete when:
 1. A qualifying pull request triggers the workflow at the current head SHA.
 2. The workflow runs the required deterministic checks and preserves their raw reports.
 3. The adversarial reviewer returns schema-valid findings with evidence.
-4. The scoring engine produces a reproducible score and applies blocking rules.
+4. JEV produces a valid risk assessment, and the assessment engine records it and
+   applies reproducible validation and blocking rules.
 5. The workflow updates one readable audit comment and uploads a JSON report.
 6. Review cycles, retries, tokens, duration, and cost are bounded.
 7. Unsafe, incomplete, stale, or inconclusive runs escalate rather than clear.
@@ -369,7 +403,7 @@ The following decisions must be resolved and recorded before production gating:
 - Additional authorized GitHub actors, if any, beyond the initial Phase 1 actor.
 - Maximum review cycles and malformed-output retries.
 - Token, latency, and cost budgets.
-- Risk weights, severity mappings, and acceptance threshold.
+- Risk rubric adjustments and calibration acceptance criteria.
 - Semgrep ruleset and suppression process.
 - Coverage baseline and regression tolerance.
 - Human override roles and escalation service-level objective.

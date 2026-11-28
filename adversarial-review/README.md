@@ -371,6 +371,20 @@ protection are implemented and approved.
 
 ## Operator runbook and activation prerequisites
 
+The initial categorical factor boundaries are stored in
+[`config/risk-rubric.json`](config/risk-rubric.json). `RiskRubric` classifies
+changed code lines, added-line coverage, adversarial findings, and new static
+warnings using those boundaries. Missing coverage fails validation, while zero
+instrumentable added lines are `not-applicable`. Validate the configuration with:
+
+```text
+dotnet run --project adversarial-review/src/AdversarialReview.Cli -- validate-risk-rubric adversarial-review/config/risk-rubric.json
+```
+
+This local factor classifier does not collect trusted PR evidence, invoke JEV,
+produce an overall risk classification, publish a PR comment, apply labels, or
+authorize a merge. Those integrations and calibration remain pending.
+
 ### Current operating mode
 
 - Deterministic validation and a trusted **preparation-only** workflow are defined.

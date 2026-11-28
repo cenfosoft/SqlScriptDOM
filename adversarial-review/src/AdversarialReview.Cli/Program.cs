@@ -142,6 +142,10 @@ internal static class ReviewCommand
                         executionBlockers = config.ExecutionBlockers()
                     }, Contracts.JsonOptions));
                     return 0;
+                case ["validate-risk-rubric", string path]:
+                    RiskRubric rubric = RiskRubric.Parse(ReadDocument(path));
+                    Console.WriteLine($"Valid risk rubric: {rubric.Version}. JEV execution and merge readiness remain disabled.");
+                    return 0;
                 case ["validate", string schema, string path]:
                     Contracts.Validate(ReadDocument(path), schema);
                     Console.WriteLine($"Valid {schema} document (schema {Contracts.Version}).");
@@ -159,7 +163,7 @@ internal static class ReviewCommand
                     Console.WriteLine("SHA-bound evidence manifest written. Authenticity still requires trusted GitHub metadata verification.");
                     return 0;
                 default:
-                    Console.Error.WriteLine("Usage: prepare-review <config.json> <output-directory> | list-models | validate-config <path> | validate <schema-name> <path> | render <audit.json> <output.md> | baseline <months> <max-pages> phase1-human-nondraft-merged-only <output.json> <output.md> <owner/repo> <owner/repo> [additional owner/repo ...] | manifest <directory> <check> <platform> <conclusion>");
+                    Console.Error.WriteLine("Usage: prepare-review <config.json> <output-directory> | list-models | validate-config <path> | validate-risk-rubric <path> | validate <schema-name> <path> | render <audit.json> <output.md> | baseline <months> <max-pages> phase1-human-nondraft-merged-only <output.json> <output.md> <owner/repo> <owner/repo> [additional owner/repo ...] | manifest <directory> <check> <platform> <conclusion>");
                     return 2;
             }
         }

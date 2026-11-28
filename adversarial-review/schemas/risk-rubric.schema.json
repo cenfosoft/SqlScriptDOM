@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "version", "changedLinesLowMaximum", "changedLinesMidMaximum",
+    "coverageLowMinimumPercent", "coverageHighMaximumPercent", "lowFindingsLowMaximum",
+    "mediumFindingsMidMaximum", "warningsLowMaximum", "warningsMidMaximum"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "version": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+    "changedLinesLowMaximum": { "type": "integer", "minimum": 0 },
+    "changedLinesMidMaximum": { "type": "integer", "minimum": 1 },
+    "coverageLowMinimumPercent": { "type": "number", "minimum": 0, "maximum": 100 },
+    "coverageHighMaximumPercent": { "type": "number", "minimum": 0, "maximum": 100 },
+    "lowFindingsLowMaximum": { "type": "integer", "minimum": 0 },
+    "mediumFindingsMidMaximum": { "type": "integer", "minimum": 1 },
+    "warningsLowMaximum": { "type": "integer", "minimum": 0 },
+    "warningsMidMaximum": { "type": "integer", "minimum": 1 }
+  }
+}
